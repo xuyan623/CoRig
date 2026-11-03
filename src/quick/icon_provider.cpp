@@ -58,6 +58,9 @@ QImage IconProvider::requestImage(const QString &id, QSize *size, const QSize &r
         {"batch",R"(<path d="M4 5v14M8 7h5v10H8ZM17 7h3v10h-3"/><path d="m11 3 3 2-3 2M14 5h7"/>)"},
         {"node",R"(<path d="M4 5h5v5H4Zm11 9h5v5h-5M9 7h6v9"/><path d="m12 13 3 3 3-3"/>)"},
         {"reset",R"(<path d="M5 9a7 7 0 1 1 0 6M5 4v5h5"/>)"},
+        // Circular loop arrow: one round trip with a single arrowhead. Used by
+        // the serial port refresh button and other "refresh state" actions.
+        {"refresh",R"(<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>)"},
         {"end",R"(<path d="M6 6h12v12H6Z" fill="{c}" stroke="none"/>)"},
         {"row",R"(<rect x="3" y="5" width="18" height="14" rx="1"/><path d="M9 5v14M15 5v14"/>)"},
         {"column",R"(<rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 9h18M3 15h18"/>)"},
