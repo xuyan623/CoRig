@@ -59,7 +59,7 @@ QVariantMap Controller::schema() const
         {"library.search",{"query","category","scope"}},{"library.state",{}},{"library.favorite",{"plugin","enabled"}},
         {"library.configure",{"view","size"}},{"library.preview",{"plugin","scope"}},{"plugin.import",{"path","manifest"}},
         {"plugin.state",{}},{"plugin.tree",{"scope"}},{"plugin.settings",{}},{"plugin.directory",{}},{"plugin.enable",{"plugin","plugins","enabled"}},
-        {"plugin.export",{"plugin","path","plugins","directory","overwrite","scope"}},{"plugin.export.dialog",{"scope","plugin"}},
+        {"plugin.export",{"plugin","path","project","plugins","directory","overwrite","scope"}},{"plugin.export.dialog",{"scope","plugin"}},
         {"plugin.remove",{"plugin","package"}},{"python.probe",{"dependencies"}},{"job.get",{"id"}},
         {"workspace.open",{"page","window"}},{"workspace.close",{"page","discard"}},{"workspace.detach",{"page","x","y"}},
         {"workspace.list",{}},{"workspace.configure",{"page","changes"}},{"workspace.remove",{"page"}},
@@ -218,7 +218,11 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
         QVariantMap request = op == "project.open" ? QVariantMap{{"path",path},{"plugin_selections",args.value("plugin_selections",QVariantMap{})}} : QVariantMap{{"project",emptyProject(args.value("name","未命名工程").toString())}};
         return launchEngine(op == "project.open" ? "project.load" : "project.replace",request,
             [this,path,args](const QVariant &result, const QString &error) {
-                busy_ = false; emit busyChanged(); if (!error.isEmpty()) return;
+                busy_ = false; emit busyChanged();
+                // A failed open used to survive only in the job record. Startup
+                // launches may not have loaded QML yet, so the notice and the log
+                // are what tells the user why the window stayed empty.
+                if (!error.isEmpty()) { qWarning("project.open 失败：%s",qUtf8Printable(error)); tell("工程打开失败：" + error,"error"); return; }
                 const auto readiness = result.toMap();
                 if (readiness.value("requires_plugin_selection").toBool() || readiness.value("requires_restart").toBool() || readiness.value("requires_plugins").toBool()) {
                     pendingPluginOpen_ = readiness; pendingPluginOpen_["path"] = path;
@@ -350,6 +354,38 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
         return commit(edit,"设计已更新");
     }
     if (op == "plugin.export") {
+        // Reading a project file does not need a live session. A project that
+        // cannot start on this machine still carries its embedded packages, so
+        // exporting them must not depend on opening it first.
+        if (args.contains("project")) {
+            auto projectFile = args.value("project").toString(); if (QUrl(projectFile).isLocalFile()) projectFile = QUrl(projectFile).toLocalFile();
+            if (projectFile.isEmpty()) throw Error("请选择工程文件");
+            auto directory = args.value("directory").toString(); if (QUrl(directory).isLocalFile()) directory = QUrl(directory).toLocalFile();
+            if (directory.isEmpty()) throw Error("请选择插件导出目录");
+            const auto document = loadProject(projectFile);
+            const auto embedded = document.value("plugin_packages").toList();
+            if (embedded.isEmpty()) throw Error("工程没有携带插件包：" + projectFile);
+            const auto requested = args.value("plugins").toStringList();
+            QList<QPair<PluginPackage,QString>> selected; QVariantList conflicts; QSet<QString> seen;
+            for (const auto &entry : embedded) {
+                const auto item = entry.toMap(); const auto id = item.value("id").toString();
+                if (!requested.isEmpty() && !requested.contains(id)) continue;
+                if (seen.contains(id)) continue; seen.insert(id);
+                const auto package = PluginPackage::read(item.value("data").toByteArray());
+                if (package.id() != id || package.hash() != item.value("sha256").toString()) throw Error("工程内插件包标识或校验值不一致：" + id);
+                const auto path = QDir(directory).filePath(PluginPackage::checkedPath(item.value("relative_path",id + ".crpl").toString()));
+                if (QFileInfo::exists(path)) conflicts.append(path);
+                selected.append({package,path});
+            }
+            for (const auto &id : requested) if (!seen.contains(id)) throw Error("工程没有携带此插件：" + id);
+            if (selected.isEmpty()) throw Error("工程没有携带所选插件：" + projectFile);
+            if (!conflicts.isEmpty() && !args.value("overwrite").toBool()) return QVariantMap{{"requires_confirmation",true},{"conflicts",conflicts}};
+            return launchTask(op,[selected,projectFile] {
+                QVariantList written;
+                for (const auto &entry : selected) { try { entry.first.save(entry.second); written.append(entry.second); } catch (const Error &error) { throw Error(QString("已导出 %1 个插件；%2").arg(written.size()).arg(error.message)); } }
+                return QVariantMap{{"project",projectFile},{"paths",written},{"count",written.size()}};
+            });
+        }
         if (args.contains("plugins")) {
             auto directory = args.value("directory").toString(); if (QUrl(directory).isLocalFile()) directory = QUrl(directory).toLocalFile();
             if (directory.isEmpty()) throw Error("请选择插件导出目录");

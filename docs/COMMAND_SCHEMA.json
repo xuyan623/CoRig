@@ -394,6 +394,7 @@
       "arguments": [
         "plugin",
         "path",
+        "project",
         "plugins",
         "directory",
         "overwrite",
