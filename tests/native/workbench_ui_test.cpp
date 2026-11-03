@@ -3,6 +3,7 @@
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QJSValue>
@@ -36,6 +37,11 @@ private slots:
     void localPluginDetailsStayVisibleWhenDisabled();
     void propertyDraftsAndPortsAreAtomic();
     void qmlContainersAndWorkspacesTravelWithProject();
+    void nodeViewBridgeContract();
+    void sixDofViewActionsMatchCall();
+    void sixDofAppearanceKeepsCamera();
+    void placedViewBridgeUsesPropertySession();
+    void viewBridgePreviewStaysReadOnly();
 private:
     QVariant run(const QString &op, const QVariantMap &args = {});
     QQuickItem *findItem(const QString &name, QQuickItem *from = nullptr);
@@ -56,6 +62,7 @@ void WorkbenchUiTest::initTestCase()
     qmlRegisterType<corig::WireLayer>("CoRig.Native",1,0,"WireLayer");
     qmlRegisterType<corig::NativePlot>("CoRig.Native",1,0,"NativePlot");
     qmlRegisterType<corig::NativeAttitude>("CoRig.Native",1,0,"NativeAttitude");
+    qmlRegisterType<corig::NativeSixDof>("CoRig.Native",1,0,"NativeSixDof");
 }
 
 void WorkbenchUiTest::init()
@@ -491,6 +498,268 @@ void WorkbenchUiTest::qmlContainersAndWorkspacesTravelWithProject()
     QTRY_VERIFY(findItem("overview.heading"));
     QCOMPARE(findItem("overview.heading")->property("text").toString(),QString("保存的总览"));
     QVERIFY(app_->pythonPath().isEmpty()); QVERIFY(run("project.validate").toMap().value("valid").toBool());
+}
+
+void WorkbenchUiTest::nodeViewBridgeContract()
+{
+    // An unplaced node view still owns a real, checked appearance contract:
+    // committing it is a project edit with undo, and runtime decisions come
+    // from the same observation the engine enforces.
+    auto *bridge = app_->userViewBridge("source","control","");
+    QVERIFY(bridge);
+    QCOMPARE(bridge->property("runtimeActive").toBool(),false);
+    QCOMPARE(bridge->property("running").toBool(),false);
+    QCOMPARE(bridge->property("pending").toBool(),false);
+    QVERIFY(bridge->property("editable").toBool());
+    QCOMPARE(bridge->property("error").toString(),QString());
+    const auto info = bridge->property("info").toMap();
+    QCOMPARE(info.value("scope").toString(),QString("view"));
+    QCOMPARE(info.value("node").toString(),QString("source"));
+    QCOMPARE(info.value("view").toString(),QString("control"));
+    QCOMPARE(info.value("read_only").toBool(),false);
+    const auto defaults = bridge->property("properties").toMap();
+    QCOMPARE(defaults.value("color").toString(),QString("#E6EDF5"));
+    QVERIFY(!defaults.contains("x"));
+    // The appearance is a public command as well, so automation discovers the
+    // same schema and reads the same checked values as QML.
+    const auto read = run("ui.view.appearance",{{"node","source"},{"view","control"}}).toMap();
+    QCOMPARE(read.value("target").toString(),QString("source/control"));
+    QCOMPARE(read.value("updated").toBool(),false);
+    QCOMPARE(read.value("properties").toMap(),defaults);
+    QVERIFY(!read.value("schema").toMap().isEmpty());
+    QVariantMap styled{{"color","#FF0000"}};
+    QVariant committed;
+    QVERIFY(QMetaObject::invokeMethod(bridge,"commit",Q_RETURN_ARG(QVariant,committed),Q_ARG(QVariantMap,styled)));
+    QCOMPARE(committed.toMap().value("updated").toBool(),true);
+    QCOMPARE(bridge->property("properties").toMap().value("color").toString(),QString("#FF0000"));
+    const auto stored = app_->project().value("ui").toMap().value("view_properties").toMap();
+    QCOMPARE(stored.value("source/control").toMap().value("color").toString(),QString("#FF0000"));
+    QVERIFY(!stored.value("source/control").toMap().contains("x"));
+    // A bridge commit and a public patch share one implementation, so their
+    // results are identical.
+    QCOMPARE(run("ui.view.appearance",{{"node","source"},{"view","control"}}).toMap().value("properties").toMap(),committed.toMap().value("properties").toMap());
+    QVERIFY(app_->dirty());
+    run("history.undo");
+    QCOMPARE(bridge->property("properties").toMap().value("color").toString(),QString("#E6EDF5"));
+    // Invalid values and canvas placement are rejected through the checked
+    // appearance schema, and the failure stays readable on the bridge.
+    QVariantMap badType{{"color",QVariant(5)}};
+    QVariant rejected;
+    QVERIFY(QMetaObject::invokeMethod(bridge,"commit",Q_RETURN_ARG(QVariant,rejected),Q_ARG(QVariantMap,badType)));
+    QVERIFY(!rejected.toMap().value("error").toString().isEmpty());
+    QVERIFY(!bridge->property("error").toString().isEmpty());
+    QVariantMap placed{{"x",48.}};
+    QVERIFY(QMetaObject::invokeMethod(bridge,"commit",Q_RETURN_ARG(QVariant,rejected),Q_ARG(QVariantMap,placed)));
+    QCOMPARE(rejected.toMap().value("error").toString(),QString("视图外观不支持布局字段：x"));
+    QVERIFY(!app_->project().value("ui").toMap().value("view_properties").toMap().contains("source/control"));
+    // A direct patch through the command is the same edit and stays on the same
+    // undo stack, so QML and automation never diverge.
+    const auto patched = run("ui.view.appearance",{{"node","source"},{"view","control"},{"changes",QVariantMap{{"background","#202020"}}}}).toMap();
+    QCOMPARE(patched.value("updated").toBool(),true);
+    QCOMPARE(bridge->property("properties").toMap().value("background").toString(),QString("#202020"));
+    run("history.undo");
+    QVERIFY(!app_->project().value("ui").toMap().value("view_properties").toMap().contains("source/control"));
+    QVERIFY(app_->invoke("ui.view.appearance",{{"node","source"},{"view","control"},{"changes",QVariantMap{{"x",16.}}}}).toMap().value("error").toString() == "视图外观不支持布局字段：x");
+    // An action runs on the engine like any other job: the bridge becomes
+    // pending, then exposes the failure the engine reported.
+    QVariantMap actionArgs{{"value",1.}};
+    QVariant actionResult;
+    QVERIFY(QMetaObject::invokeMethod(bridge,"action",Q_RETURN_ARG(QVariant,actionResult),Q_ARG(QString,QString("set_value")),Q_ARG(QVariantMap,actionArgs)));
+    QVERIFY(!actionResult.toMap().value("job").toString().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!bridge->property("pending").toBool(),10000);
+    // The declared action requires a running session, so the engine refuses it
+    // and the view keeps its button disabled until runtimeActive turns true.
+    QCOMPARE(bridge->property("error").toString(),QString("请先建立运行会话"));
+    // A running configuration reports a job; the bridge stays pending and
+    // refuses a duplicate submit until the engine settles that job. value is
+    // not runtime_editable, so the engine rejects it and the view shows why.
+    run("graph.node.add",{{"id","tune"},{"plugin","plot.curves"},{"position",QVariantList{20.,420.}}});
+    auto *tunable = app_->userViewBridge("tune","plot","");
+    QVERIFY(tunable);
+    run("workspace.open",{{"page","runtime"}});
+    run("runtime.start",{{"debug",false}});
+    QTRY_VERIFY(bridge->property("runtimeActive").toBool());
+    QVERIFY(bridge->property("running").toBool());
+    // The same action succeeds with a session, and clears the previous error.
+    QVERIFY(QMetaObject::invokeMethod(bridge,"action",Q_RETURN_ARG(QVariant,actionResult),Q_ARG(QString,QString("set_value")),Q_ARG(QVariantMap,actionArgs)));
+    QTRY_VERIFY_WITH_TIMEOUT(!bridge->property("pending").toBool(),10000);
+    QCOMPARE(bridge->property("error").toString(),QString());
+    QVariant configured;
+    QVariantMap configChanges{{"value",2.}};
+    QVERIFY(QMetaObject::invokeMethod(bridge,"configure",Q_RETURN_ARG(QVariant,configured),Q_ARG(QVariantMap,configChanges)));
+    QVERIFY(!configured.toMap().value("job").toString().isEmpty());
+    QVERIFY(bridge->property("pending").toBool());
+    QVariant blocked;
+    QVERIFY(QMetaObject::invokeMethod(bridge,"configure",Q_RETURN_ARG(QVariant,blocked),Q_ARG(QVariantMap,configChanges)));
+    QCOMPARE(blocked.toMap().value("error").toString(),QString("请等待当前操作完成"));
+    QTRY_VERIFY_WITH_TIMEOUT(!bridge->property("pending").toBool(),10000);
+    QCOMPARE(bridge->property("error").toString(),QString("该参数需要暂停后修改：value"));
+    // A runtime_editable field is accepted while running, and the accepted job
+    // carries the new value back into the design.
+    QVariantMap tuneChanges{{"window_seconds",20.}};
+    QVariant tuned;
+    QVERIFY(QMetaObject::invokeMethod(tunable,"configure",Q_RETURN_ARG(QVariant,tuned),Q_ARG(QVariantMap,tuneChanges)));
+    QVERIFY(!tuned.toMap().value("job").toString().isEmpty());
+    QVERIFY(tunable->property("pending").toBool());
+    QTRY_VERIFY_WITH_TIMEOUT(!tunable->property("pending").toBool(),10000);
+    QCOMPARE(tunable->property("error").toString(),QString());
+    QCOMPARE(app_->nodeDesign("tune").value("config").toMap().value("window_seconds").toDouble(),20.);
+    run("runtime.stop");
+    QTRY_VERIFY(!bridge->property("runtimeActive").toBool());
+    // Stopped configuration applies to the design synchronously, so the change
+    // the engine refused at runtime now succeeds.
+    QVERIFY(QMetaObject::invokeMethod(bridge,"configure",Q_RETURN_ARG(QVariant,configured),Q_ARG(QVariantMap,configChanges)));
+    // The stopped path may still hand the new design to the engine as a job;
+    // the bridge stays pending until that job adopts the project.
+    QTRY_VERIFY_WITH_TIMEOUT(!bridge->property("pending").toBool(),10000);
+    QCOMPARE(bridge->property("error").toString(),QString());
+    QCOMPARE(app_->nodeDesign("source").value("config").toMap().value("value").toDouble(),2.);
+    // Loading and validating use the same appearance rules as editing, so a
+    // tampered document cannot introduce layout geometry or unknown views.
+    corig::Catalog catalog;
+    auto tampered = app_->project();
+    auto tamperedUi = tampered.value("ui").toMap();
+    tamperedUi["view_properties"] = QVariantMap{{"source/control",QVariantMap{{"x",16.}}}};
+    tampered["ui"] = tamperedUi;
+    QVERIFY_THROWS_EXCEPTION(corig::Error,corig::validateProject(tampered,catalog));
+    tamperedUi["view_properties"] = QVariantMap{{"source/control",QVariantMap{{"color",5}}}};
+    tampered["ui"] = tamperedUi;
+    QVERIFY_THROWS_EXCEPTION(corig::Error,corig::validateProject(tampered,catalog));
+    tamperedUi["view_properties"] = QVariantMap{{"ghost/control",QVariantMap{{"color","#FFFFFF"}}}};
+    tampered["ui"] = tamperedUi;
+    QVERIFY_THROWS_EXCEPTION(corig::Error,corig::validateProject(tampered,catalog));
+    tamperedUi["view_properties"] = QVariantMap{{"source/control",QVariantMap{{"color","#FFFFFF"}}}};
+    tampered["ui"] = tamperedUi;
+    corig::validateProject(tampered,catalog);
+}
+
+void WorkbenchUiTest::sixDofViewActionsMatchCall()
+{
+    // view.actions and view.call share one table: every advertised view-local
+    // action must reach the loaded view instead of falling through to the
+    // engine's node.action, which does not declare these actions.
+    run("graph.node.add",{{"id","pose"},{"plugin","plot.sixdof"}});
+    QQmlComponent component(qml_.get(),QUrl(QStringLiteral("qrc:/qt/qml/CoRig/BuiltinView.qml")));
+    QVERIFY2(component.isReady(),qPrintable(component.errorString()));
+    std::unique_ptr<QObject> view(component.createWithInitialProperties({{"nodeId","pose"},{"viewKey","sixdof"},{"viewProperties",QVariantMap{}}}));
+    QVERIFY(view);
+    auto *item = qobject_cast<QQuickItem *>(view.get());QVERIFY(item);
+    item->setSize(QSizeF(320,240));item->setParentItem(window_->contentItem());
+    QTRY_VERIFY_WITH_TIMEOUT(item->findChild<corig::NativeSixDof *>() != nullptr,5000);
+    auto *scene = item->findChild<corig::NativeSixDof *>();
+    QTRY_VERIFY_WITH_TIMEOUT(!app_->viewState("pose","sixdof").isEmpty(),5000);
+
+    const auto listed = run("view.actions",{{"node","pose"},{"view","sixdof"}}).toList();
+    QMap<QString,QVariantMap> contracts;
+    for (const auto &entry : listed) contracts.insert(entry.toMap().value("action").toString(),entry.toMap());
+    for (const auto &name : {"camera","reset_camera","restore_defaults","export_image","geometry"})
+        QVERIFY2(contracts.contains(name),qPrintable(name));
+    QCOMPARE(contracts.value("camera").value("requires_view").toBool(),true);
+    QVERIFY(contracts.value("camera").value("args").toMap().contains("azimuth"));
+    QVERIFY(contracts.value("export_image").value("args").toMap().contains("path"));
+
+    const auto camera = run("view.call",{{"node","pose"},{"view","sixdof"},{"action","camera"},
+        {"args",QVariantMap{{"azimuth",72.},{"elevation",12.},{"distance",1.1},{"pan",QVariantList{0.,0.}}}}}).toMap();
+    QCOMPARE(camera.value("azimuth").toDouble(),72.);
+    QCOMPARE(scene->camera().value("azimuth").toDouble(),72.);
+    const auto reset = run("view.call",{{"node","pose"},{"view","sixdof"},{"action","reset_camera"}}).toMap();
+    QCOMPARE(reset.value("azimuth").toDouble(),38.);
+    run("view.call",{{"node","pose"},{"view","sixdof"},{"action","camera"},{"args",QVariantMap{{"azimuth",120.}}}});
+    QCOMPARE(scene->camera().value("azimuth").toDouble(),120.);
+    const auto restored = run("view.call",{{"node","pose"},{"view","sixdof"},{"action","restore_defaults"}}).toMap();
+    QCOMPARE(restored.value("azimuth").toDouble(),38.);
+    // A style edit through the host binding reaches setSettings but keeps the
+    // view the user is looking at.
+    const auto framed = scene->camera();
+    item->setProperty("viewProperties",QVariantMap{{"background","#000000"}});
+    QVERIFY(scene->camera() == framed);
+    const auto imagePath = folder_->path() + QStringLiteral("/sixdof.png");
+    run("view.call",{{"node","pose"},{"view","sixdof"},{"action","export_image"},
+        {"args",QVariantMap{{"path",imagePath},{"width",320},{"height",240}}}});
+    QVERIFY(QFile::exists(imagePath));
+}
+
+void WorkbenchUiTest::sixDofAppearanceKeepsCamera()
+{
+    // Appearance edits own rendering fields only; the camera is re-seated only
+    // by a changed camera default or by the explicit restore action.
+    corig::NativeSixDof scene;
+    QVariantMap settings{{"camera_azimuth",38.},{"camera_elevation",24.},{"camera_distance_m",.65},
+        {"camera_target",QVariantList{0.,0.,0.}},{"projection","orthographic"},{"background","#14212D"},
+        {"model_transparency",.65},{"show_grid",true},{"show_model_axes",true},{"show_world_axes",true}};
+    scene.setSettings(settings);
+    QCOMPARE(scene.camera().value("azimuth").toDouble(),38.);
+    scene.orbit(40,15);scene.dolly(1.3);
+    const auto orbit = scene.camera();
+    QVERIFY(orbit.value("azimuth").toDouble() != 38.);
+    auto appearance = settings;
+    appearance["background"]="#000000";appearance["show_grid"]=false;
+    appearance["model_transparency"]=.4;appearance["projection"]="perspective";
+    scene.setSettings(appearance);
+    QVERIFY(scene.camera() == orbit);
+    QCOMPARE(scene.settings().value("show_grid").toBool(),false);
+    auto cameraDefault = appearance;
+    cameraDefault["camera_azimuth"]=10.;cameraDefault["camera_elevation"]=-5.;cameraDefault["camera_distance_m"]=2.;
+    scene.setSettings(cameraDefault);
+    QCOMPARE(scene.camera().value("azimuth").toDouble(),10.);
+    QCOMPARE(scene.camera().value("elevation").toDouble(),-5.);
+    QCOMPARE(scene.camera().value("distance").toDouble(),2.);
+}
+
+void WorkbenchUiTest::placedViewBridgeUsesPropertySession()
+{
+    // A view placed on the layout resolves to its UI object's property
+    // session, so the documented members keep the per-instance appearance.
+    run("ui.view.add",{{"id","source_view"},{"node","source"},{"view","control"}});
+    auto *panel = app_->userViewBridge("source","control","source_view");
+    QVERIFY(panel);
+    QVERIFY(panel == app_->propertyBridge("ui","source_view"));
+    QCOMPARE(panel->property("scope").toString(),QString("ui"));
+    QVERIFY(!panel->property("properties").toMap().isEmpty());
+    QCOMPARE(panel->property("runtimeActive").toBool(),false);
+    QCOMPARE(panel->property("pending").toBool(),false);
+    QVERIFY(panel->property("editable").toBool());
+    QVariantMap styled{{"color","#123456"}};
+    QVariant committed;
+    QVERIFY(QMetaObject::invokeMethod(panel,"commit",Q_RETURN_ARG(QVariant,committed),Q_ARG(QVariantMap,styled)));
+    QCOMPARE(committed.toMap().value("updated").toBool(),true);
+    QCOMPARE(app_->uiItem("source_view").value("properties").toMap().value("color").toString(),QString("#123456"));
+    QCOMPARE(panel->property("properties").toMap().value("color").toString(),QString("#123456"));
+}
+
+void WorkbenchUiTest::viewBridgePreviewStaysReadOnly()
+{
+    // Design preview loads real view QML with the documented members, but the
+    // preview bridge has no authority to act or commit.
+    QQmlComponent component(qml_.get(),QUrl(QStringLiteral("qrc:/qt/qml/CoRig/BuiltinView.qml")));
+    QVERIFY2(component.isReady(),qPrintable(component.errorString()));
+    const auto url = QUrl::fromLocalFile(QStringLiteral(CORIG_SOURCE_DIR "/tests/native/probe/view_bridge_probe.qml"));
+    // A third-party node view declares its own QML; the official views use the
+    // Host interface instead, so the preview must be driven by a user plugin
+    // declaration with the documented bridge contract.
+    const QVariantMap design{{"plugin","user.bridge.preview"},{"title","桥预览"},{"config",QVariantMap{{"gain",2.}}}};
+    const QVariantMap definition{{"id","user.bridge.preview"},{"name","桥预览"},{"kind","node"},{"views",QVariantMap{}},{"properties",QVariantMap{}}};
+    std::unique_ptr<QObject> view(component.createWithInitialProperties({{"nodeId",""},{"viewKey","control"},{"designMode",true},
+        {"designOverride",design},{"definitionOverride",definition},{"viewUrlOverride",url.toString()},
+        {"viewProperties",QVariantMap{{"label","预览外观"}}}}));
+    QVERIFY(view);
+    auto *item = qobject_cast<QQuickItem *>(view.get());
+    QVERIFY(item);
+    item->setParentItem(window_->contentItem());
+    QTRY_VERIFY(findItem("view.bridge.probe",item));
+    auto *probe = findItem("view.bridge.probe",item);
+    auto *bridge = probe->property("bridgeRef").value<QObject *>();
+    QVERIFY(bridge);
+    QCOMPARE(bridge->property("editable").toBool(),false);
+    QCOMPARE(bridge->property("runtimeActive").toBool(),false);
+    QCOMPARE(bridge->property("running").toBool(),false);
+    QCOMPARE(bridge->property("pending").toBool(),false);
+    QCOMPARE(bridge->property("info").toMap().value("scope").toString(),QString("preview"));
+    QCOMPARE(bridge->property("schema").toMap().isEmpty(),true);
+    QCOMPARE(bridge->property("properties").toMap().value("label").toString(),QString("预览外观"));
+    QVERIFY(!probe->property("actionError").toString().isEmpty());
+    QVERIFY(!probe->property("commitError").toString().isEmpty());
+    QVERIFY(!probe->property("configureError").toString().isEmpty());
 }
 
 QTEST_MAIN(WorkbenchUiTest)

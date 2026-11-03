@@ -208,7 +208,10 @@ public:
     {
         if (operation == "list_ports") {
             QVariantList ports;
-            for (const auto &port : QSerialPortInfo::availablePorts()) ports.append(QVariantMap{{"port",port.portName()},{"description",port.description()},{"manufacturer",port.manufacturer()},{"serial_number",port.serialNumber()},{"system_location",port.systemLocation()}});
+            for (const auto &port : QSerialPortInfo::availablePorts()) ports.append(QVariantMap{{"port",port.portName()},{"description",port.description()},{"manufacturer",port.manufacturer()},{"serial_number",port.serialNumber()},{"system_location",port.systemLocation()},{"loopback",false}});
+            // The software loopback is a real hardware-free transport. Advertise
+            // it as a capability so views and API clients need not match its name.
+            ports.append(QVariantMap{{"port","loop://"},{"description","软件回环"},{"manufacturer",QString{}},{"serial_number",QString{}},{"system_location","loop://"},{"loopback",true}});
             return {{"ports",ports}};
         }
         auto device = devices.value(id);

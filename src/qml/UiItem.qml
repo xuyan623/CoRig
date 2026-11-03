@@ -38,8 +38,16 @@ Rectangle {
         readonly property var draft:root.props
         readonly property var config:root.props
         readonly property var state:({})
+        readonly property var schema:({})
+        readonly property var info:({scope:"preview",target:root.itemId,node:(root.record||{}).node||"",view:(root.record||{}).view||"",plugin:(root.record||{}).plugin||"",runtime_active:false,running:false,read_only:true})
         readonly property bool editable:false
+        readonly property bool pending:false
+        readonly property bool runtimeActive:false
+        readonly property bool running:false
+        readonly property string error:""
         function commit(changes){return({error:"预览中不可修改属性"})}
+        function action(name,args){return({error:"预览中不可执行动作"})}
+        function configure(changes){return({error:"预览中不可修改功能参数"})}
         function invoke(operation,args){return({error:"预览中不可执行操作"})}
     }
     Loader {

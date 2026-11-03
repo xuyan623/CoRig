@@ -52,10 +52,13 @@ public:
             auto points = series.points(begin,end,fft ? 0 : width * 2);
             if (fft) points = spectrum(points);
             else for (auto &point : points) point.rx() /= unit;
-            const bool visible = visibility.value(name,true).toBool() && (wanted.isEmpty() || wanted.contains(name));
+            // The channel filter is reported per channel as well, so a client
+            // can offer a filtered channel without re-deriving the rule.
+            const bool filtered = !wanted.isEmpty() && !wanted.contains(name);
+            const bool visible = visibility.value(name,true).toBool() && !filtered;
             if (visible) for (const auto &point : points) { yMin = std::min(yMin,point.y()); yMax = std::max(yMax,point.y()); }
             if (fft && !points.isEmpty()) { xMin = 0.; xMax = std::max(xMax,points.back().x()); }
-            channels.append(QVariantMap{{"name",name},{"color",colors.value(name,plotColors[index++ % plotColors.size()])},{"visible",visible},{"points",QVariant::fromValue(std::move(points))}});
+            channels.append(QVariantMap{{"name",name},{"color",colors.value(name,plotColors[index++ % plotColors.size()])},{"visible",visible},{"filtered",filtered},{"points",QVariant::fromValue(std::move(points))}});
         }
         if (!std::isfinite(yMin)) { yMin = -1.; yMax = 1.; }
         if (yMin == yMax) { yMin -= 1.; yMax += 1.; }

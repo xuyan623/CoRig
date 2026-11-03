@@ -13,11 +13,20 @@ PropertySession::PropertySession(Controller &owner, QString scope, QString targe
     connect(&owner,&Controller::catalogChanged,this,&PropertySession::changed);
     connect(&owner,&Controller::preferencesChanged,this,&PropertySession::changed);
     connect(&owner,&Controller::busyChanged,this,&PropertySession::changed);
+    // A view action and a draft commit can both run on the engine. Each one
+    // keeps the session pending until its own job settles, so a view cannot
+    // submit the same action twice.
     connect(&owner,&Controller::jobFinished,this,[this](const QString &id) {
-        if (id != job_) return;
-        const auto result = owner_.job(id); job_.clear();
-        if (result.value("state") == "complete") { changes_.clear(); texts_.clear(); base_.clear(); error_.clear(); }
-        else error_ = result.value("error").toString();
+        if (id != job_ && id != actionJob_) return;
+        const auto result = owner_.job(id);
+        if (id == job_) {
+            job_.clear();
+            if (result.value("state") == "complete") { changes_.clear(); texts_.clear(); base_.clear(); error_.clear(); }
+            else error_ = result.value("error").toString();
+        } else {
+            actionJob_.clear();
+            if (result.value("state") == "complete") error_.clear(); else error_ = result.value("error").toString();
+        }
         emit changed();
     });
     connect(&owner,&Controller::viewChanged,this,[this](const QString &key) {
@@ -50,6 +59,10 @@ bool PropertySession::editable() const
 {
     return !pending() && !owner_.busy() && (scope_ == "node" ? !owner_.readOnly() || owner_.runtime().value("active").toBool() : !owner_.readOnly());
 }
+// Views decide whether a requires_running action may be offered, and whether
+// the runtime is paused, from the same observation the engine enforces.
+bool PropertySession::runtimeActive() const { return owner_.runtime().value("active").toBool(); }
+bool PropertySession::running() const { return owner_.runtime().value("running").toBool(); }
 
 QVariant PropertySession::stage(const QVariantMap &changes)
 {
@@ -127,14 +140,30 @@ QVariant PropertySession::action(const QString &name, const QVariantMap &argumen
 {
     const auto node = info().value("node").toString();
     if (node.isEmpty()) return QVariantMap{{"error","此界面对象没有计算节点，请使用 invoke 调用编辑器命令"}};
-    return owner_.invoke("node.action",{{"node",node},{"action",name},{"args",arguments}});
+    if (pending()) return QVariantMap{{"error","请等待当前操作完成"}};
+    return settle(owner_.invoke("node.action",{{"node",node},{"action",name},{"args",arguments}}));
 }
 
 QVariant PropertySession::configure(const QVariantMap &changes)
 {
     const auto node = info().value("node").toString();
     if (node.isEmpty()) return QVariantMap{{"error","此视图没有计算节点"}};
-    return owner_.invoke("node.configure",{{"node",node},{"changes",changes}});
+    if (pending()) return QVariantMap{{"error","请等待当前操作完成"}};
+    return settle(owner_.invoke("node.configure",{{"node",node},{"changes",changes}}));
+}
+
+QVariant PropertySession::settle(const QVariant &result)
+{
+    // Async node work keeps this session pending until the job settles; the
+    // final failure stays readable through error.
+    const auto response = result.toMap(); const auto failure = response.value("error").toString();
+    if (!failure.isEmpty() || !response.value("ok",true).toBool()) error_ = failure.isEmpty() ? QStringLiteral("操作失败") : failure;
+    else {
+        error_.clear();
+        const auto job = response.value("job").toString();
+        if (!job.isEmpty()) actionJob_ = job;
+    }
+    emit changed(); return result;
 }
 
 QVariant PropertySession::invoke(const QString &operation, const QVariantMap &arguments)

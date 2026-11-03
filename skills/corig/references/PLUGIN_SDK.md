@@ -119,11 +119,22 @@ def process(inputs, state):
 
 views 的键是 view ID，值的 qml 指向打包资源。视图根对象必须声明 `required property var bridge`，由宿主加载时传入。
 
-- bridge.state 是节点视图快照，包含 state、inputs、outputs 等；用户 process 的 state 位于 `bridge.state.state.script_state`。
-- bridge.config 是当前参数。
-- bridge.action(name,args) 使用与 GUI/API 相同的节点动作入口。
-- 实际界面中的 bridge 按 UI 对象 ID 隔离，bridge.properties 是此外观实例的已提交属性；bridge.commit(changes) 修改此外观，bridge.configure(changes) 修改对应计算节点。两个视图即使绑定同一节点，也保留各自外观。
-- bridge.info 提供 scope、target、node、view 与 schema 等信息。设计预览只读，不能通过预览 bridge 执行动作或提交。
+| bridge 成员 | 含义 |
+|---|---|
+| state | 节点视图快照，包含 state、inputs、outputs 等；用户 process 的 state 位于 `bridge.state.state.script_state` |
+| config | 当前参数；运行中为运行值 |
+| properties / values | 此外观实例的已提交外观 |
+| schema | 可提交的外观字段：基础外观加插件 view_properties 与 views[view].properties |
+| commit(changes) | 转发公开命令 ui.view.appearance 提交外观，返回 updated（未放置视图同时返回 properties），失败返回 {error}；一次成功提交对应一步撤销 |
+| configure(changes,confirmed,revision) | 修改对应计算节点，与 node.configure 相同：可能返回 job，或端口变化时的确认清单 |
+| action(name,args) | 与 GUI/API 相同的节点动作入口；异步动作返回 job，被拒绝时返回 error |
+| info | scope、target、node、view、plugin、schema、values、commit_mode、running、runtime_active、read_only |
+| editable / pending / error | 可编辑、该 bridge 有未完成操作、最近一次失败原因 |
+| runtimeActive / running | 运行会话是否已建立、是否正在运行 |
+
+实际界面中的 bridge 按 UI 对象 ID 隔离，bridge.properties 是此外观实例的已提交属性；两个视图即使绑定同一节点，也保留各自外观。未放入界面的节点视图没有 UI 对象，外观提交写入工程 `ui.view_properties`（键为 `node/view`），只保存外观字段，不包含位置、尺寸、网格与父子关系；该文件对每个 `node/view` 组合只有一个外观槽位，不是每个实例一份。bridge.commit 与公开命令 `ui.view.appearance(node,view,changes)` 使用同一校验和提交路径，预览与自动化看到的结果一致。
+
+`requires_running`（默认 true）的动作在 runtimeActive 为 false 时会被引擎拒绝，视图应据此禁用按钮。pending 覆盖该 bridge 发起的提交、配置与异步动作，完成前应保持提交按钮禁用。预览 bridge 暴露同一组成员名，但 editable 恒为 false、runtimeActive 与 running 恒为 false，action/commit/configure 返回 {error}；设计预览只读，不能执行动作或提交。
 
 只使用 bridge，不依赖宿主的私有 C++ 对象。视图资源、Python 代码和辅助文件随 `.crpj` 保存；切换工程会卸载旧工程插件，解释器路径不会带给其他电脑。
 
@@ -135,7 +146,7 @@ views 的键是 view ID，值的 qml 指向打包资源。视图根对象必须�
 
 ## 属性面板、草稿与动态端口
 
-功能 properties、通用 view_properties 和每个 views[view].properties 分开声明；容器和工作区使用各自 properties。界面位置、尺寸、网格、父子关系继续采用宿主语义。默认表单把基础属性折叠显示；插件字段支持 label、description、choices、visible_if 等。property_commit 为 immediate（默认，在一次字段编辑结束后提交）或 batch（显式应用整组）。
+功能 properties、通用 view_properties 和每个 views[view].properties 分开声明；每个 schema 的字段数量受 properties 额度限制（默认 128），超限包在加载声明时被拒绝。容器和工作区使用各自 properties。界面位置、尺寸、网格、父子关系继续采用宿主语义。默认表单把基础属性折叠显示；插件字段支持 label、description、choices、visible_if 等。property_commit 为 immediate（默认，在一次字段编辑结束后提交）或 batch（显式应用整组）。
 
 完整自定义面板通过 editors.node、editors.view、editors.container、editors.workspace 指定 QML 文件；单个视图可用 views[view].editor 覆盖。根项声明 `required property var bridge`。插件决定何时 stage 和 commit，一次成功提交对应一步撤销：
 
@@ -146,7 +157,8 @@ views 的键是 view ID，值的 qml 指向打包资源。视图根对象必须�
 | stage(changes) / stageText(field,text) | 保存草稿，不修改工程 |
 | commit(changes={}) | 合并当前草稿并提交，可能返回 job 或确认清单 |
 | discard() | 放弃尚未提交的草稿，正在提交时不可放弃 |
-| dirty / pending / error / editable | 草稿、异步提交、错误与可编辑状态 |
+| dirty / pending / error / editable | 草稿、异步提交、错误与可编辑状态；pending 覆盖提交、配置与节点动作 |
+| runtimeActive / running | 运行会话是否已建立、是否正在运行 |
 | configure(changes) / action(name,args) | 修改功能配置或调用节点动作 |
 | invoke(op,args) | 调用相同的公开编辑器命令 |
 
@@ -188,7 +200,7 @@ graph.symbol 是节点中心符号，graph.icon 指向包内图片；有非空 s
 
 resources.get/set 与“设置 → 资源额度”共用设置。修改前停止运行会话；limits 只更新指定值，reset=true 恢复默认。包可用 requirements 声明所需额度，超限会说明需求与当前值。
 
-默认额度：archive_mib=128、expanded_mib=512、package_files=4096、ports=128、resource_mib=128、python_message_mib=16、python_timeout_ms=1000、callback_timeout_ms=1000、event_queue_mib=32、event_queue_count=65536。event_queue_mib 约束接收字节缓存，其他数据也受队列条数约束；这些额度不是进程总内存承诺。
+默认额度：archive_mib=128、expanded_mib=512、package_files=4096、ports=128、properties=128、resource_mib=128、python_message_mib=16、python_timeout_ms=1000、callback_timeout_ms=1000、event_queue_mib=32、event_queue_count=65536。event_queue_mib 约束接收字节缓存，properties 约束单个插件声明（节点参数、通用视图外观与单视图外观）的字段数，其他数据也受队列条数约束；这些额度不是进程总内存承诺。
 
 | SDK 示例 | 可直接验证的能力 |
 |---|---|

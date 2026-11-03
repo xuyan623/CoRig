@@ -78,7 +78,7 @@ python .\tools\native_release_check.py `
 .\tools\package_installer.ps1 -IfwBin C:\Qt\Tools\QtInstallerFramework\4.7\bin
 ```
 
-输出 `dist/CoRigSetup-0.4.0-Windows-x64.exe` 与 `dist/updates/windows-x64/`。安装内容分为 Qt 运行依赖、主程序、官方插件和可选 SDK，Qt 组件版本独立，未变化时无需重下。安装器可选择当前用户或所有用户；个人数据使用安装目录以外的 Windows 本地应用数据目录。
+输出 `dist/CoRigSetup-0.4.0-Windows-x64.exe` 与 `dist/updates/windows-x64/`。安装内容分为 Qt 运行依赖、主程序、官方插件和可选 SDK，Qt 组件版本独立，未变化时无需重下。安装器按当前用户安装，默认写入 `%LOCALAPPDATA%\Programs\CoRig`，可在向导中改到其他有写权限的文件夹；个人工程、插件与设置保存在安装目录内，更新只替换程序文件与同 ID 的官方插件包。
 
 `-RepositoryUrl` 指定维护工具保存的更新源，默认 https://xuyan623.github.io/CoRig/updates/windows-x64/。正式发布时将整个目录同步到 gh-pages 分支的 updates/windows-x64/，GitHub Pages 从该分支根目录发布；源文件与发布附件分别保留在 main 和 GitHub Release 中。生成本地仓库后仍需验证线上 Updates.xml 与实际维护工具结果。更新组件必须提高对应 package.xml 的 Version，再运行 repogen，更新已有插件时保留用户目录与停用/移除选择。
 

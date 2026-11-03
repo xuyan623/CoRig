@@ -23,6 +23,21 @@ private slots:
         QVERIFY_THROWS_EXCEPTION(corig::Error,hub.transact("serial","send",{{"data",bytes}}));
     }
 
+    void portListAdvertisesLoopbackCapability()
+    {
+        corig::IoHub hub;
+        const auto ports = hub.transact("ports","list_ports",{}).value("ports").toList();
+        int loopbacks = 0;
+        for (const auto &entry : ports) {
+            const auto port = entry.toMap();
+            QVERIFY(port.contains("port")); QVERIFY(port.contains("loopback"));
+            if (!port.value("loopback").toBool()) continue;
+            ++loopbacks;
+            QCOMPARE(port.value("port").toString(),QStringLiteral("loop://"));
+        }
+        QCOMPARE(loopbacks,1);
+    }
+
     void tcpAndUdp()
     {
         for (const auto &protocol : {QString("tcp"),QString("udp")}) {

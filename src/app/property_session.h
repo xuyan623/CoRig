@@ -21,6 +21,8 @@ class PropertySession final : public QObject {
     Q_PROPERTY(QVariantMap state READ state NOTIFY changed)
     Q_PROPERTY(bool dirty READ dirty NOTIFY changed)
     Q_PROPERTY(bool pending READ pending NOTIFY changed)
+    Q_PROPERTY(bool runtimeActive READ runtimeActive NOTIFY changed)
+    Q_PROPERTY(bool running READ running NOTIFY changed)
     Q_PROPERTY(bool editable READ editable NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
 public:
@@ -36,7 +38,9 @@ public:
     QVariantMap state() const;
     QVariantMap textDraft() const { return texts_; }
     bool dirty() const { return !changes_.isEmpty() || !texts_.isEmpty(); }
-    bool pending() const { return !job_.isEmpty(); }
+    bool pending() const { return !job_.isEmpty() || !actionJob_.isEmpty(); }
+    bool runtimeActive() const;
+    bool running() const;
     bool editable() const;
     QString error() const { return error_; }
     Q_INVOKABLE QVariant stage(const QVariantMap &changes);
@@ -50,8 +54,9 @@ public:
 signals:
     void changed();
 private:
+    QVariant settle(const QVariant &result);
     Controller &owner_;
-    QString scope_, target_, job_, error_;
+    QString scope_, target_, job_, actionJob_, error_;
     QVariantMap changes_, base_, texts_;
 };
 }

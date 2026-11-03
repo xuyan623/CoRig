@@ -49,6 +49,7 @@ QVariantMap Controller::schema() const
         {"ui.update",{}},{"ui.container.add",{"id","parent","plugin","properties"}},{"ui.view.add",{"id","parent","node","view","properties"}},
         {"ui.item.move",{"id","parent","index"}},{"ui.item.remove",{"id"}},{"ui.item.patch",{"id","properties"}},
         {"ui.item.schema",{"id"}},{"ui.view.bind",{"id","node","view"}},
+        {"ui.view.appearance",{"node","view","changes"}},
         {"editor.state",{"page"}},{"editor.configure",{"page","zoom","pan_x","pan_y","left_width","right_width","fit","animation"}},
         {"editor.add",{"id","page","plugin"}},{"editor.place",{"page","id","ids","position","parent","index"}},
         {"editor.withdraw",{"page","id","ids"}},{"editor.remove",{"page","id","ids","confirmed","revision"}},
@@ -317,6 +318,27 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
         }
         requireEditable(); return commit(editProject(project_,catalog_,op,args),"节点参数已更新");
     }
+    if (op == "ui.view.appearance") {
+        // Editors and automation share one entry: reading returns the declared
+        // appearance schema and the checked current values, writing validates a
+        // candidate project and commits it like any other UI edit.
+        const auto node = args.value("node").toString(), view = args.value("view").toString();
+        const auto schema = viewAppearanceSchema(project_,catalog_,node,view);
+        if (!args.contains("changes") || args.value("changes").toMap().isEmpty())
+            return QVariantMap{{"target",node+"/"+view},{"node",node},{"view",view},{"schema",schema},
+                {"properties",checkedProperties(schema,{},viewAppearance(project_,node,view))},{"updated",false}};
+        requireEditable(true);
+        const auto edit = editProject(project_,catalog_,op,args);
+        const auto receipt = commit(edit,"视图外观已更新");
+        // Reading and writing return one shape: the checked appearance and the
+        // schema stay at the top level so bridge.commit and automation see the
+        // same reply. A view appearance never changes the engine, so the commit
+        // is synchronous; the job branch is kept for a future engine edit.
+        auto result = edit.result.toMap();
+        result["updated"] = true;
+        if (receipt.contains("job")) result["job"] = receipt.value("job");
+        return result;
+    }
     if (op == "batch" || op.startsWith("graph.node.") || op.startsWith("graph.wire.") || op.startsWith("ui.") || op.startsWith("editor.") || op == "sync.apply") {
         const bool layoutOnly = op.startsWith("ui.") || (op.startsWith("editor.") && args.value("page") == "layout") || op == "graph.node.move" || op == "graph.node.rotate" || op == "graph.node.patch" || op == "graph.wire.patch" || op == "sync.apply";
         requireEditable(layoutOnly || op == "batch");
@@ -452,13 +474,48 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
     throw Error("操作尚未提供处理入口：" + op);
 }
 
+namespace {
+// Built-in views execute these actions in their own QML call(). The table is
+// the single source for view.actions discovery and view.call routing: an action
+// cannot be advertised without being dispatched to the view, or dispatched
+// without being discoverable. requires_view marks actions that need a loaded
+// view instance; range and fft also update the polled arguments without one.
+QVariantList builtinViewActions(const QString &kind)
+{
+    const auto camera = [] { return QVariantMap{
+        {"description","调整方位、俯仰和缩放"},{"requires_view",true},{"args",QVariantMap{
+            {"azimuth",QVariantMap{{"type","number"}}},{"elevation",QVariantMap{{"type","number"}}},
+            {"distance",QVariantMap{{"type","number"}}},{"pan",QVariantMap{{"type","array"}}}}}}; };
+    const auto exportImage = [](const QString &description) { return QVariantMap{
+        {"description",description},{"requires_view",true},{"args",QVariantMap{
+            {"path",QVariantMap{{"type","string"}}},{"width",QVariantMap{{"type","integer"}}},
+            {"height",QVariantMap{{"type","integer"}}}}}}; };
+    const auto action = [](const QString &name, const QVariantMap &contract) {
+        QVariantMap entry{{"action",name}}; for (auto i = contract.cbegin(); i != contract.cend(); ++i) entry[i.key()] = i.value(); return entry; };
+    if (kind == "plot.curves") return {
+        action("range",{{"description","设置坐标范围与跟随"},{"requires_view",false},{"args",QVariantMap{
+            {"follow",QVariantMap{{"type","boolean"}}},{"fft",QVariantMap{{"type","boolean"}}},
+            {"x_min",QVariantMap{{"type","number"}}},{"x_max",QVariantMap{{"type","number"}}},
+            {"y_min",QVariantMap{{"type","number"}}},{"y_max",QVariantMap{{"type","number"}}}}}}),
+        action("fft",{{"description","切换频谱"},{"requires_view",false},{"args",QVariantMap{
+            {"enabled",QVariantMap{{"type","boolean"}}},{"follow",QVariantMap{{"type","boolean"}}}}}}),
+        action("export_image",exportImage("导出 PNG 或 SVG"))};
+    if (kind == "plot.attitude") return {
+        action("camera",camera()), action("reset_camera",{{"description","恢复相机"},{"requires_view",true}}),
+        action("export_image",exportImage("导出 PNG"))};
+    if (kind == "plot.sixdof") return {
+        action("camera",camera()), action("reset_camera",{{"description","恢复相机"},{"requires_view",true}}),
+        // Restores the view's rendering defaults; saved appearance is untouched.
+        action("restore_defaults",{{"description","恢复相机与渲染默认值（不修改已保存外观）"},{"requires_view",true}}),
+        action("export_image",exportImage("导出 PNG"))};
+    return {};
+}
+} // namespace
+
 QVariantList Controller::viewActions(const QString &node, const QString &view) const
 {
     const auto design = nodeDesign(node); if (design.isEmpty()) throw Error("节点不存在");
-    const auto kind = design.value("plugin").toString(); QVariantList actions;
-    const auto add = [&](const QString &name, const QString &description) { actions.append(QVariantMap{{"action",name},{"description",description}}); };
-    if (kind == "plot.curves") { add("range","设置坐标范围与跟随"); add("fft","切换频谱"); add("export_image","导出 PNG 或 SVG"); }
-    if (kind == "plot.attitude") { add("camera","调整方位、俯仰和缩放"); add("reset_camera","恢复相机"); add("export_image","导出 PNG"); }
+    const auto kind = design.value("plugin").toString(); QVariantList actions = builtinViewActions(kind);
     const auto declared = definition(kind).value("actions").toMap();
     for (auto i = declared.cbegin(); i != declared.cend(); ++i) actions.append(QVariantMap{{"action",i.key()},{"contract",i.value()}});
     Q_UNUSED(view); return actions;
@@ -468,7 +525,10 @@ QVariant Controller::viewCall(const QVariantMap &args)
 {
     const auto node = args.value("node").toString(), view = args.value("view").toString(), action = args.value("action").toString();
     const auto arguments = args.value("args").toMap(); const auto key = node + "/" + view;
-    if (action == "range" || action == "fft") {
+    bool viewOwned = false;
+    for (const auto &entry : builtinViewActions(nodeDesign(node).value("plugin").toString()))
+        if (entry.toMap().value("action").toString() == action) viewOwned = true;
+    if (viewOwned && (action == "range" || action == "fft")) {
         for (const auto &candidate : viewItems_.value(key)) if (candidate && candidate->property("visible").toBool()) {
             QVariant result;
             if (QMetaObject::invokeMethod(candidate,"viewAction",Q_RETURN_ARG(QVariant,result),Q_ARG(QVariant,QVariant(action)),Q_ARG(QVariant,QVariant(arguments)))) return result;
@@ -478,7 +538,7 @@ QVariant Controller::viewCall(const QVariantMap &args)
         if (action == "fft") options["fft"] = arguments.value("enabled",true);
         observeView(node,view,options); return QVariantMap{{"updated",true}};
     }
-    if (action == "camera" || action == "reset_camera" || action == "export_image") {
+    if (viewOwned) {
         QPointer<QObject> item;
         for (const auto &candidate : viewItems_.value(key)) if (candidate && candidate->property("visible").toBool()) { item = candidate; break; }
         if (!item) throw Error("请先打开目标视图");

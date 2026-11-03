@@ -2,6 +2,7 @@
 #include "workspaces.h"
 #include "api_server.h"
 #include "quick/graph_geometry.h"
+#include "core/catalog.h"
 #include "core/resource_policy.h"
 #include "core/plugin_script.h"
 #include "property_session.h"
@@ -28,27 +29,142 @@
 #include <cmath>
 
 namespace corig {
-
-// The view bridge exposes the same observed state and checked actions used by
-// official views. User QML never receives a live engine or device object.
+// The view bridge exposes the same observed state, checked actions and
+// committed appearance used by official views. User QML never receives a live
+// engine or device object. Views placed on the layout use the property session
+// of their UI object; this bridge is the deterministic contract for a node view
+// that has no placement yet.
 class UserViewBridge final : public QObject {
     Q_OBJECT
+    Q_PROPERTY(QString node READ node CONSTANT)
+    Q_PROPERTY(QString view READ view CONSTANT)
     Q_PROPERTY(QVariantMap state READ state NOTIFY changed)
     Q_PROPERTY(QVariantMap config READ config NOTIFY changed)
+    Q_PROPERTY(QVariantMap properties READ properties NOTIFY changed)
+    Q_PROPERTY(QVariantMap values READ values NOTIFY changed)
+    Q_PROPERTY(QVariantMap schema READ schema NOTIFY changed)
+    Q_PROPERTY(QVariantMap info READ info NOTIFY changed)
+    Q_PROPERTY(bool editable READ editable NOTIFY changed)
+    Q_PROPERTY(bool pending READ pending NOTIFY changed)
+    Q_PROPERTY(bool runtimeActive READ runtimeActive NOTIFY changed)
+    Q_PROPERTY(bool running READ running NOTIFY changed)
+    Q_PROPERTY(QString error READ error NOTIFY changed)
 public:
     UserViewBridge(Controller &owner, QString node, QString view) : QObject(&owner), owner_(owner), node_(std::move(node)), view_(std::move(view)) {
         connect(&owner,&Controller::viewChanged,this,[this](const QString &key) { if (key == node_ + "/" + view_) emit changed(); });
         connect(&owner,&Controller::projectChanged,this,&UserViewBridge::changed);
+        connect(&owner,&Controller::catalogChanged,this,&UserViewBridge::changed);
+        connect(&owner,&Controller::runtimeChanged,this,&UserViewBridge::changed);
+        connect(&owner,&Controller::busyChanged,this,&UserViewBridge::changed);
+        connect(&owner,&Controller::preferencesChanged,this,&UserViewBridge::changed);
+        // The bridge owns its async job so a view can hold its own submit
+        // button disabled until the engine really finishes the previous one.
+        connect(&owner,&Controller::jobFinished,this,[this](const QString &id) {
+            if (id != job_) return;
+            const auto result = owner_.job(id); job_.clear();
+            if (result.value("state") == "complete") error_.clear(); else error_ = result.value("error").toString();
+            emit changed();
+        });
     }
+    QString node() const { return node_; }
+    QString view() const { return view_; }
     QVariantMap state() const { return owner_.viewState(node_,view_); }
-    QVariantMap config() const { return owner_.nodeDesign(node_).value("config").toMap(); }
-    Q_INVOKABLE QVariant action(const QString &name, const QVariantMap &args = {}) { return owner_.invoke("node.action",{{"node",node_},{"action",name},{"args",args}}); }
+    QVariantMap config() const
+    {
+        const auto design = owner_.nodeDesign(node_).value("config").toMap();
+        if (design.isEmpty()) return {};
+        return owner_.nodeState(node_).value("config",design).toMap();
+    }
+    // An unplaced view has no UI object, so its appearance lives in the
+    // project's view-level map. Reading back declared defaults keeps the
+    // contract true instead of silently reporting an empty map.
+    QVariantMap properties() const
+    {
+        try { return checkedViewAppearance(owner_.project(),owner_.catalog_,node_,view_,{},stored()); }
+        catch (const std::exception &) { return stored(); }
+    }
+    QVariantMap values() const { return properties(); }
+    QVariantMap schema() const;
+    QVariantMap info() const;
+    bool editable() const { return !pending() && !owner_.busy() && !owner_.readOnly(); }
+    bool pending() const { return !job_.isEmpty(); }
+    bool runtimeActive() const { return owner_.runtime().value("active").toBool(); }
+    bool running() const { return owner_.runtime().value("running").toBool(); }
+    QString error() const { return error_; }
+    Q_INVOKABLE QVariant action(const QString &name, const QVariantMap &arguments = {});
+    Q_INVOKABLE QVariant configure(const QVariantMap &changes, bool confirmed = false, const QString &revision = {});
+    Q_INVOKABLE QVariant commit(const QVariantMap &changes = {});
 signals:
     void changed();
 private:
+    QVariantMap stored() const { return viewAppearance(owner_.project(),node_,view_); }
+    QVariant refuse(const QString &message);
+    QVariant settle(const QVariant &result);
     Controller &owner_;
-    QString node_, view_;
+    QString node_, view_, job_, error_;
 };
+
+QVariantMap UserViewBridge::schema() const
+{
+    if (owner_.nodeDesign(node_).isEmpty()) return {};
+    try { return viewAppearanceSchema(owner_.project(),owner_.catalog_,node_,view_); }
+    catch (const std::exception &) { return {}; }
+}
+
+QVariantMap UserViewBridge::info() const
+{
+    const auto plugin = owner_.nodeDesign(node_).value("plugin").toString(); QString commitMode{"immediate"};
+    if (!plugin.isEmpty()) { try { commitMode = owner_.catalog_.definition(plugin).value("property_commit","immediate").toString(); } catch (const std::exception &) {} }
+    return {{"scope","view"},{"target",node_+"/"+view_},{"node",node_},{"view",view_},{"plugin",plugin},
+        {"schema",schema()},{"values",properties()},{"commit_mode",commitMode},
+        {"running",running()},{"runtime_active",runtimeActive()},{"read_only",owner_.readOnly()}};
+}
+
+QVariant UserViewBridge::refuse(const QString &message)
+{
+    error_ = message; emit changed(); return QVariantMap{{"error",error_}};
+}
+
+QVariant UserViewBridge::settle(const QVariant &result)
+{
+    // An accepted configuration that runs on the engine reports a job; the
+    // bridge stays pending until that job settles, then exposes its failure.
+    const auto response = result.toMap(); const auto failure = response.value("error").toString();
+    if (!failure.isEmpty() || !response.value("ok",true).toBool()) error_ = failure.isEmpty() ? QStringLiteral("操作失败") : failure;
+    else {
+        error_.clear();
+        const auto job = response.value("job").toString();
+        if (!job.isEmpty()) job_ = job;
+    }
+    emit changed(); return result;
+}
+
+QVariant UserViewBridge::action(const QString &name, const QVariantMap &arguments)
+{
+    if (owner_.nodeDesign(node_).isEmpty()) return refuse("节点不存在："+node_);
+    if (pending()) return refuse("请等待当前操作完成");
+    return settle(owner_.invoke("node.action",{{"node",node_},{"action",name},{"args",arguments}}));
+}
+
+QVariant UserViewBridge::configure(const QVariantMap &changes, bool confirmed, const QString &revision)
+{
+    if (owner_.nodeDesign(node_).isEmpty()) return refuse("节点不存在："+node_);
+    if (pending()) return refuse("请等待当前操作完成");
+    return settle(owner_.invoke("node.configure",{{"node",node_},{"changes",changes},{"confirmed",confirmed},{"revision",revision}}));
+}
+
+QVariant UserViewBridge::commit(const QVariantMap &changes)
+{
+    if (owner_.nodeDesign(node_).isEmpty()) return refuse("节点不存在："+node_);
+    if (pending()) return refuse("请等待当前操作完成");
+    // The bridge forwards the public appearance command. The command owns the
+    // schema checks, layout-field rejection and the undoable project commit, so
+    // QML and automation cannot diverge.
+    const auto reply = owner_.invoke("ui.view.appearance",{{"node",node_},{"view",view_},{"changes",changes}}).toMap();
+    const auto failure = reply.value("error").toString();
+    if (!failure.isEmpty()) return refuse(failure);
+    error_.clear(); emit changed(); return reply;
+}
 
 Controller::Controller(QString dataDirectory, QObject *parent, const QVariantMap &initialCatalog) : QObject(parent), dataDirectory_(QDir(dataDirectory).absolutePath()), project_(emptyProject())
 {
@@ -329,7 +445,8 @@ QVariantMap Controller::propertyInfo(const QString &scope, const QString &target
         auto editor = spec.value("editors").toMap().value(editorScope).toString();
         if (!view.isEmpty()) editor = spec.value("views").toMap().value(view).toMap().value("editor",editor).toString();
         return {{"scope",scope},{"target",target},{"item",item},{"plugin",plugin},{"node",node},{"view",view},{"schema",fields},{"values",values},
-            {"editor",editor.isEmpty() ? QString{} : pluginResourceUrl(plugin,editor)},{"commit_mode",spec.value("property_commit","immediate")},{"running",runtime_.value("running")},{"read_only",readOnly_}};
+            {"editor",editor.isEmpty() ? QString{} : pluginResourceUrl(plugin,editor)},{"commit_mode",spec.value("property_commit","immediate")},
+            {"running",runtime_.value("running")},{"runtime_active",runtime_.value("active")},{"read_only",readOnly_}};
     } catch (const Error &error) { return {{"scope",scope},{"target",target},{"error",error.message}}; }
 }
 

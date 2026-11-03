@@ -195,6 +195,21 @@ QVariantList PluginPackage::definitions() const
         if (kind == "workspace" && QStringList{"graph","layout","runtime","logs","library"}.contains(identifier)) throw Error("工作区 ID 已由内置页面使用："+identifier);
         spec["kind"] = kind;
         if (!QStringList{"immediate","batch"}.contains(spec.value("property_commit","immediate").toString())) throw Error("property_commit 需要 immediate 或 batch："+identifier);
+        // Property schemas are scanned on every configuration read and write.
+        // Bound each declaration so a pathological package cannot turn every
+        // edit into a large traversal. The budget is process-wide and
+        // adjustable like the other resource limits.
+        const auto limitProperties = [&](const QVariantMap &schema, const QString &scope) {
+            const auto limit = resourceLimit("properties");
+            if (schema.size() <= limit) return;
+            throw Error(QString("插件 %1 的 %2 声明了 %3 个属性，超过当前 properties=%4 额度；请在资源设置中调整")
+                .arg(identifier).arg(scope).arg(static_cast<int>(schema.size())).arg(limit));
+        };
+        limitProperties(spec.value("properties").toMap(), "properties");
+        limitProperties(spec.value("view_properties").toMap(), "view_properties");
+        const auto declaredViews = spec.value("views").toMap();
+        for (auto i = declaredViews.cbegin(); i != declaredViews.cend(); ++i)
+            limitProperties(i.value().toMap().value("properties").toMap(), "views." + i.key() + ".properties");
         spec["package_id"] = id(); spec["package_hash"] = hash();
         spec["implementation"] = manifest_.value("implementation");
         spec["builtin"] = false;

@@ -67,4 +67,4 @@ Python 插件按包使用独立工作进程，同包节点 state 与 namespace �
 
 plugin.export(plugins,directory,scope) 批量导出并保留目录；目标已存在时先返回 requires_confirmation 和 conflicts，不写入文件。GUI 同样支持全选、全不选、反选和分类选择。覆盖现有文件需要明确确认再传 overwrite=true。工程打开冲突由用户选择 plugin_selections 中的 project/local；requires_plugins 报告缺失依赖，requires_restart 报告需重启的 C++ 包，不能视作已打开。
 
-安装版数据默认在 Windows 本地应用数据目录，portable.ini 的便携版使用程序目录；--data-dir 优先。update.state 查询维护支持，update.check 等待真实任务结果，update.install 启动维护工具前必须保存工程。正式更新源需先部署，未部署或不可达时如实报告。app.restart 保留数据目录和工程路径。不要替用户切换插件版本或覆盖未保存工程。
+安装版与便携版的数据默认都在程序所在目录（安装器默认装到当前用户 %LOCALAPPDATA%\Programs\CoRig）；portable.ini 只是便携包标记，运行时不读取；--data-dir 可改数据目录。update.state 查询维护支持，update.check 等待真实任务结果，update.install 启动维护工具前必须保存工程。正式更新源需先部署，未部署或不可达时如实报告。app.restart 保留数据目录和工程路径。不要替用户切换插件版本或覆盖未保存工程。

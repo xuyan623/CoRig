@@ -126,6 +126,7 @@ signals:
     void draftResolutionRequested(const QString &operation, const QVariantMap &arguments, const QVariantList &drafts);
 private:
     friend class Workspaces;
+    friend class UserViewBridge;
     QVariantMap appState() const;
     QVariantMap launchEngine(const QString &operation, const QVariantMap &arguments, std::function<void(const QVariant &,const QString &)> completed = {});
     QVariantMap launchTask(const QString &operation, std::function<QVariant()> task, std::function<void(const QVariant &,const QString &)> completed = {});

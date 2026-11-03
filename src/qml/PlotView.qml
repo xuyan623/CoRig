@@ -10,8 +10,87 @@ Item {
     property bool fft:false
     property var range:({})
     property string exportKind:"png"
+    // The channel list must survive the view poll, which replaces the whole
+    // observation every refresh. Rows are keyed by channel name and show the
+    // node's own channel state: the view keeps a click while its patch is in
+    // flight and never re-derives why the node hides a channel.
+    property var visibilityJobs:({})
+    property var colorJobs:({})
+    property var jobChannels:({})
+    property var visibilityHold:({})
+    property var colorHold:({})
     function observe(){if(host.designMode||!host.nodeId)return;let args=Object.assign({width:Math.round(plot.width),follow:follow,fft:fft},range);App.observeView(host.nodeId,host.viewKey,args)}
-    function patch(key,value){let changes={};changes[key]=value;App.invoke("node.configure",{node:host.nodeId,changes:changes,persist:!App.readOnly})}
+    function patch(changes){return App.invoke("node.configure",{node:host.nodeId,changes:changes,persist:!App.readOnly})}
+    function rowOf(name){for(let i=0;i<channels.count;++i)if(channels.get(i).channel===name)return i;return -1}
+    // A visibility patch carries the user's own values only, so replaying a
+    // pending click never rewrites channels the node filtered out.
+    function visibilityMap(){const map=Object.assign({},root.host.config.visibility||{});for(const name in root.visibilityHold)map[name]=root.visibilityHold[name];return map}
+    function colorMap(name,color){const map=Object.assign({},root.host.config.colors||{});for(const other in root.colorHold)map[other]=root.colorHold[other];map[name]=color;return map}
+    function track(kind,name,job){const table=kind==="visibility"?root.visibilityJobs:root.colorJobs;table[name]=job;root.jobChannels[job]={channel:name,kind:kind}}
+    function sync(){
+        const observed=root.host.observation.channels||[],seen={}
+        for(let i=0;i<observed.length;++i){
+            const item=observed[i],name=item.name;if(!name)continue
+            seen[name]=true
+            // The node's channel state is the only source, and a held value is
+            // released as soon as the node reports that value back, so a poll
+            // requested before the patch cannot revert the user's click.
+            const tint=item.color===undefined?"":String(item.color)
+            if(name in root.visibilityHold&&root.visibilityHold[name]===item.visible)delete root.visibilityHold[name]
+            if(name in root.colorHold&&root.colorHold[name]===tint)delete root.colorHold[name]
+            let row=root.rowOf(name)
+            if(row<0){channels.append({channel:name,ticked:false,tint:"",filtered:false});row=channels.count-1}
+            // Writes that change nothing would still wake every delegate for
+            // each poll, so the row is only touched when a value differs.
+            const ticked=(name in root.visibilityHold)?root.visibilityHold[name]:item.visible===true
+            const shown=(name in root.colorHold)?root.colorHold[name]:tint
+            const filtered=item.filtered===true
+            if(channels.get(row).ticked!==ticked)channels.setProperty(row,"ticked",ticked)
+            if(channels.get(row).tint!==shown)channels.setProperty(row,"tint",shown)
+            if(channels.get(row).filtered!==filtered)channels.setProperty(row,"filtered",filtered)
+        }
+        for(let i=channels.count-1;i>=0;--i){
+            const name=channels.get(i).channel;if(seen[name])continue
+            delete root.visibilityHold[name];delete root.colorHold[name];channels.remove(i)
+        }
+    }
+    function setVisible(name,ticked){
+        const row=root.rowOf(name);if(row<0)return
+        const previous=channels.get(row).ticked
+        channels.setProperty(row,"ticked",ticked);root.visibilityHold[name]=ticked
+        let changes={visibility:root.visibilityMap()}
+        // The node reports this channel as filtered out, so asking for it on
+        // also opens the filter instead of leaving the click without effect.
+        if(ticked&&channels.get(row).filtered){const wanted=root.host.config.channels||[];if(wanted.indexOf(name)<0)changes.channels=wanted.concat([name])}
+        const reply=root.patch(changes)
+        if(reply.job){root.track("visibility",name,reply.job);return}
+        // A rejected or merely planned answer never reached the node, so the row
+        // falls back instead of waiting for a document that will not change.
+        if(reply.ok===false||reply.requires_confirmation===true){delete root.visibilityHold[name];channels.setProperty(row,"ticked",previous);return}
+        root.sync()
+    }
+    function setColor(name,color){
+        const row=root.rowOf(name);if(row<0)return
+        const previous=channels.get(row).tint
+        channels.setProperty(row,"tint",color);root.colorHold[name]=color
+        const reply=root.patch({colors:root.colorMap(name,color)})
+        if(reply.job){root.track("colors",name,reply.job);return}
+        if(reply.ok===false||reply.requires_confirmation===true){delete root.colorHold[name];channels.setProperty(row,"tint",previous);return}
+        root.sync()
+    }
+    // Settles one patch. A stale job never overrides the row a newer patch owns.
+    // A failed job drops the hold at once, so the row falls back to the node; a
+    // completed one keeps it until the node reports the same value back, which
+    // keeps the click visible for the one poll that may still be in flight.
+    function settle(id){
+        const owner=root.jobChannels[id];if(!owner)return
+        delete root.jobChannels[id]
+        const name=owner.channel,table=owner.kind==="visibility"?root.visibilityJobs:root.colorJobs
+        if(table[name]===id)delete table[name]
+        if(table[name]!==undefined)return
+        if(App.job(id).state!=="complete"){const holds=owner.kind==="visibility"?root.visibilityHold:root.colorHold;delete holds[name]}
+        root.sync()
+    }
     function call(action,args){
         if(action==="range"||action==="fft"){
             if(action==="fft")fft=args.enabled===undefined?true:args.enabled
@@ -25,10 +104,13 @@ Item {
         if(action==="export_image")return plot.exportImage(args.path,args.width||1600,args.height||900)
         return({ok:false,error:"未知曲线视图操作"})
     }
-    Component.onCompleted:observe()
+    ListModel{id:channels}
+    Component.onCompleted:{observe();sync()}
     onFollowChanged:observe()
     onFftChanged:observe()
     onRangeChanged:observe()
+    Connections{target:root.host;function onObservationChanged(){root.sync()}function onConfigChanged(){root.sync()}}
+    Connections{target:App;function onJobFinished(id){root.settle(id)}}
     ColumnLayout{
         anchors.fill:parent;spacing:0
         RowLayout{
@@ -68,12 +150,21 @@ Item {
                 Column{
                     width:142
                     Repeater{
-                        model:root.host.observation.channels||[]
+                        model:channels
                         Row{
-                            required property var modelData;width:142;height:32;spacing:4
-                            CheckBox{width:28;height:30;checked:modelData.visible;onClicked:{let map=Object.assign({},root.host.config.visibility||{});map[modelData.name]=checked;root.patch("visibility",map)}}
-                            Rectangle{width:9;height:9;radius:2;color:modelData.color;anchors.verticalCenter:parent.verticalCenter;TapHandler{onTapped:{colorPicker.channel=modelData.name;colorPicker.selectedColor=modelData.color;colorPicker.open()}}}
-                            Label{width:98;text:modelData.name;color:Theme.text;elide:Text.ElideRight;anchors.verticalCenter:parent.verticalCenter;ToolTip.visible:hover.hovered;ToolTip.text:modelData.name;HoverHandler{id:hover}}
+                            required property string channel
+                            required property bool ticked
+                            required property string tint
+                            width:142;height:32;spacing:4
+                            CheckBox{
+                                id:toggle;width:28;height:30
+                                // The click owns the button until the patch settles;
+                                // Binding re-applies a rollback without breaking it.
+                                Binding{target:toggle;property:"checked";value:ticked}
+                                onClicked:root.setVisible(channel,toggle.checked)
+                            }
+                            Rectangle{width:9;height:9;radius:2;color:tint;anchors.verticalCenter:parent.verticalCenter;TapHandler{onTapped:{colorPicker.channel=channel;colorPicker.selectedColor=tint;colorPicker.open()}}}
+                            Label{width:98;text:channel;color:Theme.text;elide:Text.ElideRight;anchors.verticalCenter:parent.verticalCenter;ToolTip.visible:hover.hovered;ToolTip.text:channel;HoverHandler{id:hover}}
                         }
                     }
                 }
@@ -82,6 +173,5 @@ Item {
     }
     Menu{id:exportMenu;MenuItem{text:"原始数据 CSV…";onTriggered:{root.exportKind="csv";exportFile.nameFilters=["CSV (*.csv)"];exportFile.defaultSuffix="csv";exportFile.open()}}MenuItem{text:"图片 PNG…";onTriggered:{root.exportKind="png";exportFile.nameFilters=["PNG (*.png)"];exportFile.defaultSuffix="png";exportFile.open()}}MenuItem{text:"矢量图 SVG…";onTriggered:{root.exportKind="svg";exportFile.nameFilters=["SVG (*.svg)"];exportFile.defaultSuffix="svg";exportFile.open()}}MenuSeparator{}MenuItem{text:"清空曲线";onTriggered:root.host.action("clear",{})}}
     FileDialog{id:exportFile;title:"导出曲线";fileMode:FileDialog.SaveFile;onAccepted:{const path=decodeURIComponent(selectedFile.toString().replace(/^file:\/\/\//,""));if(root.exportKind==="csv")root.host.action("export_csv",{path:path});else App.invoke("view.call",{node:root.host.nodeId,view:root.host.viewKey,action:"export_image",args:{path:path}})}}
-    ColorDialog{id:colorPicker;property string channel:"";title:"选择曲线颜色";onAccepted:{let colors=Object.assign({},root.host.config.colors||{});colors[channel]=selectedColor.toString();root.patch("colors",colors)}}
+    ColorDialog{id:colorPicker;property string channel:"";title:"选择曲线颜色";onAccepted:root.setColor(channel,selectedColor.toString())}
 }
-

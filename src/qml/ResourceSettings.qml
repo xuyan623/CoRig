@@ -7,7 +7,7 @@ Dialog {
     width:560; height:Math.min(690,parent.height-48)
     property var limits:({})
     property string error:""
-    readonly property var labels:({archive_mib:"插件压缩包 / MiB",expanded_mib:"插件展开总量 / MiB",package_files:"每包文件数",ports:"每节点端口数",python_message_mib:"Python 单条消息 / MiB",python_timeout_ms:"普通 Python 调用 / ms",callback_timeout_ms:"声明校验与取消等待 / ms",event_queue_mib:"运行事件队列 / MiB",event_queue_count:"运行事件条数",resource_mib:"单个工程资源 / MiB"})
+    readonly property var labels:({archive_mib:"插件压缩包 / MiB",expanded_mib:"插件展开总量 / MiB",package_files:"每包文件数",ports:"每节点端口数",properties:"每节点/视图属性数",python_message_mib:"Python 单条消息 / MiB",python_timeout_ms:"普通 Python 调用 / ms",callback_timeout_ms:"声明校验与取消等待 / ms",event_queue_mib:"运行事件队列 / MiB",event_queue_count:"运行事件条数",resource_mib:"单个工程资源 / MiB"})
     onOpened:{limits=App.invoke("resources.get",{});error=""}
     ColumnLayout {
         anchors.fill:parent; spacing:12

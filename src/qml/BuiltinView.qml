@@ -17,7 +17,7 @@ Item {
     property var observation:({})
     readonly property var config:snapshot.config||design.config||({})
     objectName:"view."+nodeId+"."+viewKey
-    implicitHeight:design.plugin==="plot.curves"||design.plugin==="plot.attitude"||design.plugin==="terminal.ansi"?340:design.plugin==="debug.console"?320:design.plugin&&design.plugin.startsWith("io.")?200:76
+    implicitHeight:design.plugin==="plot.curves"||design.plugin==="plot.attitude"||design.plugin==="terminal.ansi"||design.plugin==="plot.xy"||design.plugin==="plot.sixdof"?340:design.plugin==="debug.console"?320:design.plugin&&design.plugin.startsWith("io.")?200:76
     function action(name,args){if(!designMode&&App.nodeDesign(nodeId).placed!==false&&App.nodeDesign(nodeId).plugin===design.plugin)return App.invoke("node.action",{node:nodeId,action:name,args:args||{}});return({})}
     function viewAction(action,args){if(content.item&&content.item.call)return content.item.call(action,args);return({ok:false,error:"视图不支持该操作"})}
     // Layout loaders assign their item identity after construction. Register
@@ -28,7 +28,8 @@ Item {
     onViewKeyChanged:Qt.callLater(register)
     Connections{target:App;function onViewChanged(key){if(key===root.nodeId+"/"+root.viewKey)root.observation=App.viewState(root.nodeId,root.viewKey)}}
     // External QML gets declared defaults while previewing, with no route to
-    // node actions. Real views continue to use the observed runtime bridge.
+    // node actions. Real views continue to use the observed runtime bridge, so
+    // both expose the same member names.
     QtObject {
         id:previewBridge
         readonly property var state:({})
@@ -36,7 +37,13 @@ Item {
         readonly property var properties:root.viewProperties
         readonly property var values:root.viewProperties
         readonly property var draft:root.viewProperties
+        readonly property var schema:({})
+        readonly property var info:({scope:"preview",target:root.nodeId+"/"+root.viewKey,node:root.nodeId,view:root.viewKey,runtime_active:false,running:false,read_only:true})
         readonly property bool editable:false
+        readonly property bool pending:false
+        readonly property bool runtimeActive:false
+        readonly property bool running:false
+        readonly property string error:""
         function action(name,args){return({error:"预览中不可执行动作"})}
         function commit(changes){return({error:"预览中不可修改外观"})}
         function configure(changes){return({error:"预览中不可修改功能参数"})}

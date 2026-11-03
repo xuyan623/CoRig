@@ -4,8 +4,11 @@
 
 namespace corig {
 namespace {
+// properties bounds the fields declared by one plugin schema. Official
+// packages peak at 27 node fields and 14 view fields, so 128 keeps room for
+// user plugins without allowing pathological declarations.
 const QVariantMap Defaults{{"archive_mib",128},{"expanded_mib",512},{"package_files",4096},
-    {"ports",128},{"python_message_mib",16},{"python_timeout_ms",1000},
+    {"ports",128},{"properties",128},{"python_message_mib",16},{"python_timeout_ms",1000},
     {"callback_timeout_ms",1000},{"event_queue_mib",32},{"event_queue_count",65536},{"resource_mib",128}};
 QReadWriteLock policyLock;
 QVariantMap policy = Defaults;

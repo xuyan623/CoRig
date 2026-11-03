@@ -69,6 +69,113 @@ QVector<QString> executionOrder(const QVariantMap &project, const Catalog &catal
     return sequence;
 }
 
+namespace {
+// Geometry and hierarchy belong to placement. The view-level appearance store
+// keeps only visual fields, so every reader and writer shares this filter.
+const QSet<QString> &uiLayoutFields()
+{
+    static const QSet<QString> fields{"grid_size","x","y","width","height","stretch","min_width","min_height","max_width","max_height","row","column","rowspan","colspan","padding","gap","current_index"};
+    return fields;
+}
+QVariantMap withoutLayoutFields(QVariantMap values)
+{
+    for (const auto &field : uiLayoutFields()) values.remove(field);
+    return values;
+}
+QStringList declaredViews(const QVariantMap &definition)
+{
+    const auto declared = definition.value("views");
+    return declared.metaType().id() == QMetaType::QVariantMap ? declared.toMap().keys() : declared.toStringList();
+}
+}
+
+QVariantMap uiPropertySchema(const QVariantMap &item, const Catalog &catalog, const QVariantMap &project)
+{
+    QVariantMap result{
+        {"grid_size",QVariantMap{{"type","integer"},{"default",16},{"min",1},{"max",128}}},
+        {"x",QVariantMap{{"type","number"},{"default",24.}}}, {"y",QVariantMap{{"type","number"},{"default",24.}}},
+        {"width",QVariantMap{{"type","number"},{"default",320.},{"min",40.},{"max",16384.}}}, {"height",QVariantMap{{"type","number"},{"default",200.},{"min",32.},{"max",16384.}}},
+        {"title",QVariantMap{{"type","string"},{"default",""}}}, {"stretch",QVariantMap{{"type","integer"},{"default",1},{"min",0},{"max",1000}}},
+        {"min_width",QVariantMap{{"type","integer"},{"default",80},{"min",0}}}, {"min_height",QVariantMap{{"type","integer"},{"default",60},{"min",0}}},
+        {"max_width",QVariantMap{{"type","integer"},{"default",16777215},{"min",1}}}, {"max_height",QVariantMap{{"type","integer"},{"default",16777215},{"min",1}}},
+        {"row",QVariantMap{{"type","integer"},{"default",-1},{"min",-1}}}, {"column",QVariantMap{{"type","integer"},{"default",-1},{"min",-1}}},
+        {"rowspan",QVariantMap{{"type","integer"},{"default",1},{"min",1}}}, {"colspan",QVariantMap{{"type","integer"},{"default",1},{"min",1}}},
+        {"font_size",QVariantMap{{"type","number"},{"default",13},{"min",6},{"max",96}}}, {"font_family",QVariantMap{{"type","string"},{"default","Segoe UI"}}},
+        {"color",QVariantMap{{"type","string"},{"default","#E6EDF5"}}}, {"background",QVariantMap{{"type","string"},{"default","#182330"}}},
+        {"label",QVariantMap{{"type","string"},{"default",""}}}, {"gap",QVariantMap{{"type","integer"},{"default",8},{"min",0},{"max",100}}},
+        {"padding",QVariantMap{{"type","integer"},{"default",8},{"min",0},{"max",100}}}
+    };
+    for (auto i = result.begin(); i != result.end(); ++i) { auto field = i.value().toMap(); field["section"] = "base"; i.value() = field; }
+    if (item.value("plugin") == "layout.grid") result.insert("columns",QVariantMap{{"type","integer"},{"default",2},{"min",1},{"max",64}});
+    if (item.value("id") != project.value("ui").toMap().value("root")) result.remove("grid_size");
+    if (item.value("plugin") == "layout.tabs") result.insert("current_index",QVariantMap{{"type","integer"},{"default",0},{"min",0}});
+    // Plugins own business appearance fields. Geometry and hierarchy retain
+    // their editor meaning; authors can read/write those common fields too.
+    QVariantMap extra;
+    const auto container = item.value("plugin").toString();
+    const bool builtinContainer = QStringList{"layout.canvas","layout.row","layout.column","layout.grid","layout.tabs"}.contains(container);
+    if (!container.isEmpty() && !builtinContainer) extra = catalog.definition(container).value("properties").toMap();
+    else if (container.isEmpty()) {
+        auto binding = item.value("binding").toMap();
+        for (const auto &entry : project.value("nodes").toList()) if (entry.toMap().value("id") == item.value("node")) {
+            const auto live = entry.toMap(); if (binding.isEmpty() || binding.value("plugin") == live.value("plugin")) binding = live;
+        }
+        if (!binding.value("plugin").toString().isEmpty()) {
+            const auto spec = catalog.definition(binding.value("plugin").toString());
+            extra = spec.value("view_properties").toMap();
+            const auto local = spec.value("views").toMap().value(item.value("view").toString()).toMap().value("properties").toMap();
+            for (auto i = local.cbegin(); i != local.cend(); ++i) extra[i.key()] = i.value();
+        }
+    }
+    for (auto i = extra.cbegin(); i != extra.cend(); ++i) {
+        if (uiLayoutFields().contains(i.key()) && result.contains(i.key())) continue;
+        result[i.key()] = i.value();
+    }
+    return result;
+}
+
+QVariantMap checkedUiProperties(const QVariantMap &item, const Catalog &catalog, const QVariantMap &project,
+                               const QVariantMap &changes, const QVariantMap &previous)
+{
+    const auto schema = uiPropertySchema(item,catalog,project); const auto plugin = item.value("plugin").toString();
+    if (!plugin.isEmpty()) {
+        if (QStringList{"layout.canvas","layout.row","layout.column","layout.grid","layout.tabs"}.contains(plugin)) return checkedProperties(schema,changes,previous);
+        return catalog.checkedPresentation(plugin,"container",schema,changes,previous);
+    }
+    auto binding = item.value("binding").toMap();
+    for (const auto &entry : project.value("nodes").toList()) if (entry.toMap().value("id") == item.value("node")) {
+        const auto live = entry.toMap(); if (binding.isEmpty() || binding.value("plugin") == live.value("plugin")) binding = live;
+    }
+    const auto id = binding.value("plugin").toString();
+    return id.isEmpty() ? checkedProperties(schema,changes,previous) : catalog.checkedPresentation(id,"view",schema,changes,previous);
+}
+
+QVariantMap viewAppearance(const QVariantMap &project, const QString &node, const QString &view)
+{
+    return project.value("ui").toMap().value("view_properties").toMap().value(node+"/"+view).toMap();
+}
+
+QVariantMap viewAppearanceSchema(const QVariantMap &project, const Catalog &catalog, const QString &node, const QString &view)
+{
+    QVariantMap design;
+    for (const auto &entry : project.value("nodes").toList()) if (entry.toMap().value("id") == node) { design = entry.toMap(); break; }
+    if (design.isEmpty()) throw Error("节点不存在："+node);
+    if (!declaredViews(catalog.definition(design.value("plugin").toString())).contains(view)) throw Error("节点没有声明该视图："+view);
+    QVariantMap item{{"id",node+"/"+view},{"node",node},{"view",view},{"binding",design}};
+    return withoutLayoutFields(uiPropertySchema(item,catalog,project));
+}
+
+QVariantMap checkedViewAppearance(const QVariantMap &project, const Catalog &catalog, const QString &node, const QString &view,
+                                 const QVariantMap &changes, const QVariantMap &previous)
+{
+    for (auto i = changes.cbegin(); i != changes.cend(); ++i)
+        if (uiLayoutFields().contains(i.key())) throw Error("视图外观不支持布局字段："+i.key());
+    QVariantMap item{{"id",node+"/"+view},{"node",node},{"view",view}};
+    for (const auto &entry : project.value("nodes").toList()) if (entry.toMap().value("id") == node) { item["binding"] = entry.toMap(); break; }
+    if (item.value("binding").toMap().isEmpty()) throw Error("节点不存在："+node);
+    return withoutLayoutFields(checkedUiProperties(item,catalog,project,changes,withoutLayoutFields(previous)));
+}
+
 void validateProject(const QVariantMap &project, const Catalog &catalog)
 {
     if (project.value("format") != "corig-project" || project.value("schema_version").toInt() != 3)
@@ -146,6 +253,15 @@ void validateProject(const QVariantMap &project, const Catalog &catalog)
     };
     visit(ui.value("root").toString());
     if (visited.size() != items.size()) throw Error("界面树存在未归属对象");
+    // The view-level appearance store is saved document data. Loading and the
+    // project validator enforce exactly the rules the editor write path uses,
+    // so an external project cannot introduce unchecked keys or values.
+    const auto appearances = ui.value("view_properties").toMap();
+    for (auto i = appearances.cbegin(); i != appearances.cend(); ++i) {
+        const auto separator = i.key().indexOf('/');
+        if (separator <= 0 || separator == i.key().size()-1) throw Error("视图外观键需要 node/view："+i.key());
+        checkedProperties(viewAppearanceSchema(project,catalog,i.key().left(separator),i.key().mid(separator+1)),{},i.value().toMap());
+    }
     const auto workspaces = project.value("workspaces").toMap();
     for (auto i = workspaces.cbegin(); i != workspaces.cend(); ++i) {
         if (catalog.kind(i.key()) != "workspace") throw Error("工程引用的插件不是工作区："+i.key());

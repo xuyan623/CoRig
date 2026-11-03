@@ -35,68 +35,6 @@ static QStringList views(const QVariantMap &definition)
     return declared.metaType().id() == QMetaType::QVariantMap ? declared.toMap().keys() : declared.toStringList();
 }
 
-QVariantMap uiPropertySchema(const QVariantMap &item, const Catalog &catalog, const QVariantMap &project)
-{
-    QVariantMap result{
-        {"grid_size",QVariantMap{{"type","integer"},{"default",16},{"min",1},{"max",128}}},
-        {"x",QVariantMap{{"type","number"},{"default",24.}}}, {"y",QVariantMap{{"type","number"},{"default",24.}}},
-        {"width",QVariantMap{{"type","number"},{"default",320.},{"min",40.},{"max",16384.}}}, {"height",QVariantMap{{"type","number"},{"default",200.},{"min",32.},{"max",16384.}}},
-        {"title",QVariantMap{{"type","string"},{"default",""}}}, {"stretch",QVariantMap{{"type","integer"},{"default",1},{"min",0},{"max",1000}}},
-        {"min_width",QVariantMap{{"type","integer"},{"default",80},{"min",0}}}, {"min_height",QVariantMap{{"type","integer"},{"default",60},{"min",0}}},
-        {"max_width",QVariantMap{{"type","integer"},{"default",16777215},{"min",1}}}, {"max_height",QVariantMap{{"type","integer"},{"default",16777215},{"min",1}}},
-        {"row",QVariantMap{{"type","integer"},{"default",-1},{"min",-1}}}, {"column",QVariantMap{{"type","integer"},{"default",-1},{"min",-1}}},
-        {"rowspan",QVariantMap{{"type","integer"},{"default",1},{"min",1}}}, {"colspan",QVariantMap{{"type","integer"},{"default",1},{"min",1}}},
-        {"font_size",QVariantMap{{"type","number"},{"default",13},{"min",6},{"max",96}}}, {"font_family",QVariantMap{{"type","string"},{"default","Segoe UI"}}},
-        {"color",QVariantMap{{"type","string"},{"default","#E6EDF5"}}}, {"background",QVariantMap{{"type","string"},{"default","#182330"}}},
-        {"label",QVariantMap{{"type","string"},{"default",""}}}, {"gap",QVariantMap{{"type","integer"},{"default",8},{"min",0},{"max",100}}},
-        {"padding",QVariantMap{{"type","integer"},{"default",8},{"min",0},{"max",100}}}
-    };
-    for (auto i = result.begin(); i != result.end(); ++i) { auto field = i.value().toMap(); field["section"] = "base"; i.value() = field; }
-    if (item.value("plugin") == "layout.grid") result.insert("columns",QVariantMap{{"type","integer"},{"default",2},{"min",1},{"max",64}});
-    if (item.value("id") != project.value("ui").toMap().value("root")) result.remove("grid_size");
-    if (item.value("plugin") == "layout.tabs") result.insert("current_index",QVariantMap{{"type","integer"},{"default",0},{"min",0}});
-    // Plugins own business appearance fields. Geometry and hierarchy retain
-    // their editor meaning; authors can read/write those common fields too.
-    QVariantMap extra;
-    const auto container = item.value("plugin").toString();
-    const bool builtinContainer = QStringList{"layout.canvas","layout.row","layout.column","layout.grid","layout.tabs"}.contains(container);
-    if (!container.isEmpty() && !builtinContainer) extra = catalog.definition(container).value("properties").toMap();
-    else if (container.isEmpty()) {
-        auto binding = item.value("binding").toMap();
-        for (const auto &entry : project.value("nodes").toList()) if (entry.toMap().value("id") == item.value("node")) {
-            const auto live = entry.toMap(); if (binding.isEmpty() || binding.value("plugin") == live.value("plugin")) binding = live;
-        }
-        if (!binding.value("plugin").toString().isEmpty()) {
-            const auto spec = catalog.definition(binding.value("plugin").toString());
-            extra = spec.value("view_properties").toMap();
-            const auto local = spec.value("views").toMap().value(item.value("view").toString()).toMap().value("properties").toMap();
-            for (auto i = local.cbegin(); i != local.cend(); ++i) extra[i.key()] = i.value();
-        }
-    }
-    static const QSet<QString> structural{"grid_size","x","y","width","height","stretch","min_width","min_height","max_width","max_height","row","column","rowspan","colspan","padding","gap","current_index"};
-    for (auto i = extra.cbegin(); i != extra.cend(); ++i) {
-        if (structural.contains(i.key()) && result.contains(i.key())) continue;
-        result[i.key()] = i.value();
-    }
-    return result;
-}
-
-QVariantMap checkedUiProperties(const QVariantMap &item, const Catalog &catalog, const QVariantMap &project,
-                               const QVariantMap &changes, const QVariantMap &previous)
-{
-    const auto schema = uiPropertySchema(item,catalog,project); const auto plugin = item.value("plugin").toString();
-    if (!plugin.isEmpty()) {
-        if (QStringList{"layout.canvas","layout.row","layout.column","layout.grid","layout.tabs"}.contains(plugin)) return checkedProperties(schema,changes,previous);
-        return catalog.checkedPresentation(plugin,"container",schema,changes,previous);
-    }
-    auto binding = item.value("binding").toMap();
-    for (const auto &entry : project.value("nodes").toList()) if (entry.toMap().value("id") == item.value("node")) {
-        const auto live = entry.toMap(); if (binding.isEmpty() || binding.value("plugin") == live.value("plugin")) binding = live;
-    }
-    const auto id = binding.value("plugin").toString();
-    return id.isEmpty() ? checkedProperties(schema,changes,previous) : catalog.checkedPresentation(id,"view",schema,changes,previous);
-}
-
 QVariantMap nodeConfigurationPlan(const QVariantMap &project, const Catalog &catalog, const QString &id, const QVariantMap &changes)
 {
     auto nodes = project.value("nodes").toList(); const auto at = findItem(nodes,id); auto node = nodes[at].toMap();
@@ -160,6 +98,15 @@ EditResult editProject(QVariantMap project, const Catalog &catalog, const QStrin
         for (const auto &id : ids) findItem(nodes,id);
         nodes.erase(std::remove_if(nodes.begin(),nodes.end(),[&](const QVariant &v) { return ids.contains(v.toMap().value("id").toString()); }),nodes.end());
         wires.erase(std::remove_if(wires.begin(),wires.end(),[&](const QVariant &v) { const auto w = v.toMap(); return ids.contains(w.value("source").toList().value(0).toString()) || ids.contains(w.value("target").toList().value(0).toString()); }),wires.end());
+        // View-level appearance slots are keyed by node/view, so removing a
+        // node drops the slots that can no longer resolve. Otherwise the next
+        // save would fail project validation on a dangling key.
+        auto ui = project.value("ui").toMap(); auto appearances = ui.value("view_properties").toMap();
+        for (auto i = appearances.begin(); i != appearances.end(); ) {
+            const auto separator = i.key().indexOf('/');
+            if (separator > 0 && ids.contains(i.key().left(separator))) i = appearances.erase(i); else ++i;
+        }
+        ui["view_properties"] = appearances; project["ui"] = ui;
         edit.result = QVariantMap{{"removed",ids}}; edit.engineChanged = true;
     } else if (operation == "graph.node.move" || operation == "graph.node.rotate" || operation == "graph.node.patch" || operation == "node.configure") {
         const auto id = args.value("id",args.value("node")).toString(); const auto index = findItem(nodes,id); auto node = nodes[index].toMap();
@@ -271,6 +218,20 @@ EditResult editProject(QVariantMap project, const Catalog &catalog, const QStrin
             items.erase(std::remove_if(items.begin(),items.end(),[&](const QVariant &v) { return removed.contains(v.toMap().value("id").toString()); }),items.end());
             for (auto &entry : items) { auto item = entry.toMap(); if (item.contains("children")) { auto children = item.value("children").toList(); children.removeAll(id); item["children"] = children; entry = item; } }
             edit.result = QVariantMap{{"removed",id}};
+        } else if (operation == "ui.view.appearance") {
+            // A node view that is not placed on the layout keeps one
+            // appearance slot per node/view pair. The command layer rejects
+            // empty changes so this branch always performs a checked edit.
+            const auto node = args.value("node").toString(), view = args.value("view").toString();
+            const auto key = node+"/"+view;
+            auto appearances = ui.value("view_properties").toMap();
+            const auto previous = appearances.value(key).toMap();
+            const auto next = checkedViewAppearance(project,catalog,node,view,args.value("changes").toMap(),previous);
+            const bool changed = next != previous;
+            if (changed) appearances[key] = next;
+            ui["view_properties"] = appearances;
+            edit.result = QVariantMap{{"target",key},{"node",node},{"view",view},
+                {"schema",viewAppearanceSchema(project,catalog,node,view)},{"properties",next},{"updated",changed}};
         } else if (operation == "ui.item.patch") {
             const auto index = findItem(items,args.value("id").toString()); auto item = items[index].toMap();
             item["properties"] = checkedUiProperties(item,catalog,project,args.value("properties").toMap(),item.value("properties").toMap()); items[index] = item; edit.result = item;

@@ -7,6 +7,7 @@
 #include <QtCore/private/qzipwriter_p.h>
 #include "core/project.h"
 #include "core/native_plugin.h"
+#include "core/resource_policy.h"
 #include "app/plugin_store.h"
 #include <algorithm>
 #include <cmath>
@@ -39,6 +40,7 @@ private slots:
     void folderClassificationAndOptionalDependencies();
     void localInventoryExcludesProjectCopies();
     void matchingVersionDoesNotConflictOnRebuild();
+    void propertyDeclarationLimit();
 };
 
 void PluginTest::zipAndPythonRoundTrip()
@@ -225,6 +227,44 @@ void PluginTest::matchingVersionDoesNotConflictOnRebuild()
     PluginStore installedStore(installedFolder.filePath("plugins"),installedSettings);
     installedStore.install(rebuilt,"gain.crpl");
     QVERIFY(installedStore.readiness(project).isEmpty());
+}
+
+void PluginTest::propertyDeclarationLimit()
+{
+    // Every declared schema (node parameters, shared view appearance and one
+    // schema per view) is bounded by the process-wide properties budget.
+    struct ResetPolicy { ~ResetPolicy() { configureResourceLimits({},true); } } reset;
+    const auto package = [](int fields, int viewFields) {
+        QVariantMap schema, viewSchema;
+        for (int i = 0; i < fields; ++i) schema.insert(QString("field%1").arg(i),QVariantMap{{"type","number"},{"default",0}});
+        for (int i = 0; i < viewFields; ++i) viewSchema.insert(QString("view%1").arg(i),QVariantMap{{"type","number"},{"default",0}});
+        QVariantMap definition{{"id","user.test.properties"},{"name","属性上限"},{"code_file","entry.py"},{"properties",schema}};
+        if (viewFields) definition["view_properties"] = viewSchema;
+        const QVariantMap manifest{{"format","corig-plugin"},{"package_api",1},{"id","user.test.properties"},{"version","1"},{"implementation","python"},
+            {"plugins",QVariantList{definition}}};
+        return PluginPackage::create(manifest,{{"entry.py",QByteArray("def process(inputs,state):\n return {}\n")}});
+    };
+    const auto limit = static_cast<int>(resourceLimit("properties"));
+    QCOMPARE(limit,128);
+    QCOMPARE(static_cast<int>(package(limit,limit).definitions().first().toMap().value("properties").toMap().size()),limit);
+    QString error;
+    try { package(limit+1,0); } catch (const Error &failure) { error = QString::fromUtf8(failure.what()); }
+    QVERIFY(error.contains(QString::number(limit+1)));
+    QVERIFY(error.contains("properties="+QString::number(limit)));
+    error.clear();
+    try { package(1,limit+1); } catch (const Error &failure) { error = QString::fromUtf8(failure.what()); }
+    QVERIFY(error.contains("view_properties"));
+    // The budget is adjustable for the whole process; both directions refresh
+    // the same declaration check without restarting the catalog.
+    configureResourceLimits({{"properties",3}});
+    QCOMPARE(static_cast<int>(package(3,3).definitions().first().toMap().value("properties").toMap().size()),3);
+    bool rejected = false;
+    try { package(4,0); } catch (const Error &) { rejected = true; }
+    QVERIFY(rejected);
+    configureResourceLimits({},true);
+    // All 80 shipped packages declare schemas inside the default budget.
+    Catalog installed;
+    QCOMPARE(installed.describe().size(),80);
 }
 
 QTEST_GUILESS_MAIN(PluginTest)
