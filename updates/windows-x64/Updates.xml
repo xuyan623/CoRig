@@ -3,20 +3,6 @@
  <ApplicationVersion>1.0.0</ApplicationVersion>
  <Checksum>true</Checksum>
  <PackageUpdate>
-  <Name>org.corig.application</Name>
-  <DisplayName>联调 CoRig</DisplayName>
-  <Description>功能设计、界面设计与调试工作台</Description>
-  <Version>0.4.3</Version>
-  <ReleaseDate>2026-11-03</ReleaseDate>
-  <Default>true</Default>
-  <Dependencies>org.corig.runtime-6.12.0</Dependencies>
-  <Script>installscript.qs</Script>
-  <UpdateFile CompressedSize="12346029" OS="Any" UncompressedSize="38922963"/>
-  <DownloadableArchives>docs.7z,examples.7z,licenses.7z,skills.7z,verification.7z,content.7z</DownloadableArchives>
-  <UserInterfaces>InstallScope.ui,UninstallOptions.ui</UserInterfaces>
-  <SHA1>cbd6fcdd5e8e0cdadb5e7dc76b912b0f9ac4ea59</SHA1>
- </PackageUpdate>
- <PackageUpdate>
   <Name>org.corig.official</Name>
   <DisplayName>官方插件</DisplayName>
   <Description>通信、协议、数据处理、数学、仪表与录制回放插件</Description>
@@ -52,6 +38,20 @@
   <DownloadableArchives>CoRigSdk.7z</DownloadableArchives>
   <SHA1>f23b89147b65a4ffad65210c32eb3d71014f3925</SHA1>
  </PackageUpdate>
- <SHA1>2d171f5f48e0bba8b10b670343d5d57259f1edc4</SHA1>
- <MetadataName>2026-11-03-1143_meta.7z</MetadataName>
+ <SHA1>acd67986f985d119ba237c38527341d5c3cbf3cb</SHA1>
+ <MetadataName>2026-11-03-1328_meta.7z</MetadataName>
+ <PackageUpdate>
+  <Name>org.corig.application</Name>
+  <DisplayName>联调 CoRig</DisplayName>
+  <Description>功能设计、界面设计与调试工作台</Description>
+  <Version>0.4.3.1</Version>
+  <ReleaseDate>2026-11-03</ReleaseDate>
+  <Default>true</Default>
+  <Dependencies>org.corig.runtime-6.12.0</Dependencies>
+  <Script>installscript.qs</Script>
+  <UpdateFile CompressedSize="12346702" OS="Any" UncompressedSize="38898611"/>
+  <DownloadableArchives>docs.7z,examples.7z,licenses.7z,skills.7z,verification.7z,content.7z</DownloadableArchives>
+  <UserInterfaces>InstallScope.ui,UninstallOptions.ui</UserInterfaces>
+  <SHA1>eaff326b61f1f0d8a30f1f5ec4a6d255decbab80</SHA1>
+ </PackageUpdate>
 </Updates>
