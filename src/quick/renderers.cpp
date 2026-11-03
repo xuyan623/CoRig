@@ -7,6 +7,7 @@
 #include <QPainter>
 #include <QSvgGenerator>
 #include <QFileInfo>
+#include <QPolygonF>
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -269,27 +270,78 @@ QVariantMap NativePlot::exportImage(const QString &path, int width, int height) 
     } catch (const Error &error) { return {{"ok",false},{"error",error.message}}; }
 }
 
+// Camera and mount math are shared so every 3D view moves and frames models
+// the same way; each view only supplies its defaults and projection range.
+void SceneCamera::reset(const QVariantMap &defaults, double minimumDistance, double maximumDistance)
+{
+    minimumDistance_ = minimumDistance; maximumDistance_ = maximumDistance;
+    state_ = {{"azimuth",defaults.value("azimuth",38.)},{"elevation",defaults.value("elevation",24.)},{"distance",defaults.value("distance",4.5)},{"pan",defaults.value("pan",QVariantList{0.,0.})}};
+    apply({});
+}
+
+void SceneCamera::apply(const QVariantMap &value)
+{
+    QVariantMap next = state_;
+    // Accept only documented fields; NaN must never reach the projection.
+    for (const auto &key : {"azimuth","elevation","distance","pan"}) if (value.contains(key)) next[key] = value.value(key);
+    for (const auto &key : {"azimuth","elevation","distance"}) if (!std::isfinite(next.value(key).toDouble())) return;
+    const auto pan = next.value("pan",QVariantList{0.,0.}).toList();
+    if (pan.size() != 2 || !std::isfinite(pan[0].toDouble()) || !std::isfinite(pan[1].toDouble())) return;
+    next["elevation"] = std::clamp(next.value("elevation").toDouble(),-89.9,89.9);
+    next["distance"] = std::clamp(next.value("distance").toDouble(),minimumDistance_,maximumDistance_);
+    state_ = next;
+}
+
+void SceneCamera::orbit(double dx, double dy) { apply({{"azimuth",state_.value("azimuth").toDouble() - dx * .4},{"elevation",state_.value("elevation").toDouble() + dy * .4}}); }
+void SceneCamera::pan(double dx, double dy, double viewportHeight) { const auto p = state_.value("pan").toList(); const double scale = state_.value("distance").toDouble() / std::max(100.,viewportHeight); apply({{"pan",QVariantList{p.value(0).toDouble() + dx * scale,p.value(1).toDouble() - dy * scale}}}); }
+void SceneCamera::dolly(double factor) { if (factor > 0. && std::isfinite(factor)) apply({{"distance",state_.value("distance").toDouble() * factor}}); }
+
+QMatrix4x4 SceneCamera::view(const QVector3D &target) const
+{
+    const auto azimuth = state_.value("azimuth",38.).toDouble() * std::numbers::pi / 180., elevation = state_.value("elevation",24.).toDouble() * std::numbers::pi / 180., distance = state_.value("distance").toDouble();
+    const auto pan = state_.value("pan").toList(); QMatrix4x4 result;
+    result.translate(static_cast<float>(pan.value(0).toDouble()),static_cast<float>(pan.value(1).toDouble()),0.f);
+    // The target stays fixed in world space, independently of incoming pose.
+    result.lookAt(target + QVector3D(static_cast<float>(distance * std::cos(elevation) * std::cos(azimuth)),static_cast<float>(distance * std::cos(elevation) * std::sin(azimuth)),static_cast<float>(distance * std::sin(elevation))),target,{0,0,1});
+    return result;
+}
+
+QMatrix4x4 SceneCamera::projection(double aspect, const QString &mode, float nearPlane, float farPlane) const
+{
+    QMatrix4x4 result; const auto distance = state_.value("distance").toDouble();
+    if (mode == "orthographic") { const auto span = static_cast<float>(distance * .42); result.ortho(-span * static_cast<float>(aspect),span * static_cast<float>(aspect),-span,span,nearPlane,farPlane); }
+    else result.perspective(42.f,static_cast<float>(aspect),nearPlane,farPlane);
+    return result;
+}
+
+QMatrix4x4 meshMount(const QVariantMap &config, const Mesh &mesh, double unitScale)
+{
+    const auto offset = config.value("model_offset",QVariantList{0.,0.,0.}).toList(), installation = config.value("model_rotation_deg",QVariantList{0.,0.,0.}).toList();
+    QMatrix4x4 result;
+    result.translate(static_cast<float>(offset.value(0).toDouble() * unitScale),static_cast<float>(offset.value(1).toDouble() * unitScale),static_cast<float>(offset.value(2).toDouble() * unitScale));
+    result.rotate(QQuaternion::fromEulerAngles(static_cast<float>(installation.value(0).toDouble()),static_cast<float>(installation.value(1).toDouble()),static_cast<float>(installation.value(2).toDouble())));
+    result.scale(static_cast<float>(unitScale * config.value("model_scale",1.).toDouble()));
+    if (config.value("auto_center",true).toBool()) result.translate(-mesh.center);
+    return result;
+}
+
 NativeAttitude::NativeAttitude(QQuickItem *parent) : QQuickItem(parent) { setFlag(ItemHasContents); setClip(true); }
-void NativeAttitude::setData(const QVariantMap &value) { if (data_ == value) return; data_ = value; if (camera_.isEmpty()) resetCamera(); update(); emit dataChanged(); }
-void NativeAttitude::setCamera(const QVariantMap &value) { for (auto i = value.cbegin(); i != value.cend(); ++i) camera_[i.key()] = i.value(); camera_["elevation"] = std::clamp(camera_.value("elevation",24.).toDouble(),-89.9,89.9); camera_["distance"] = std::clamp(camera_.value("distance",4.5).toDouble(),1.05,10000.); update(); emit cameraChanged(); }
-void NativeAttitude::resetCamera() { const auto config = data_.value("config").toMap(); camera_.clear(); setCamera({{"azimuth",config.value("camera_azimuth",38.)},{"elevation",config.value("camera_elevation",24.)},{"distance",config.value("camera_distance",4.5)},{"pan",config.value("camera_pan",QVariantList{0.,0.})}}); }
-void NativeAttitude::orbit(double dx, double dy) { setCamera({{"azimuth",camera_.value("azimuth").toDouble() - dx * .4},{"elevation",camera_.value("elevation").toDouble() + dy * .4}}); }
-void NativeAttitude::pan(double dx, double dy) { const auto p = camera_.value("pan").toList(); const double scale = camera_.value("distance",4.5).toDouble() / std::max(100.,height()); setCamera({{"pan",QVariantList{p.value(0).toDouble() + dx * scale,p.value(1).toDouble() - dy * scale}}}); }
-void NativeAttitude::dolly(double factor) { setCamera({{"distance",camera_.value("distance",4.5).toDouble() * factor}}); }
+void NativeAttitude::setData(const QVariantMap &value) { if (data_ == value) return; data_ = value; if (camera_.state().isEmpty()) resetCamera(); update(); emit dataChanged(); }
+void NativeAttitude::setCamera(const QVariantMap &value) { camera_.apply(value); update(); emit cameraChanged(); }
+void NativeAttitude::resetCamera() { const auto config = data_.value("config").toMap(); camera_.reset({{"azimuth",config.value("camera_azimuth",38.)},{"elevation",config.value("camera_elevation",24.)},{"distance",config.value("camera_distance",4.5)},{"pan",config.value("camera_pan",QVariantList{0.,0.})}},1.05,10000.); update(); emit cameraChanged(); }
+void NativeAttitude::orbit(double dx, double dy) { camera_.orbit(dx,dy); update(); emit cameraChanged(); }
+void NativeAttitude::pan(double dx, double dy) { camera_.pan(dx,dy,height()); update(); emit cameraChanged(); }
+void NativeAttitude::dolly(double factor) { camera_.dolly(factor); update(); emit cameraChanged(); }
 
 QSGNode *NativeAttitude::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
 {
     auto root = old ? old : new QSGNode; clear(root); const auto mesh = data_.value("mesh").value<MeshPtr>(); if (!mesh || height() < 1.) return root;
     const auto config = data_.value("config").toMap(); const auto rows = data_.value("matrix").toList(); QMatrix4x4 pose;
     for (int row = 0; row < 3; ++row) for (int col = 0; col < 3; ++col) pose(row,col) = static_cast<float>(rows.value(row).toList().value(col).toDouble());
-    const auto installation = config.value("model_rotation_deg").toList(), offset = config.value("model_offset").toList(), target = config.value("camera_target").toList();
-    QMatrix4x4 mount; mount.translate(static_cast<float>(offset.value(0).toDouble() / mesh->radius),static_cast<float>(offset.value(1).toDouble() / mesh->radius),static_cast<float>(offset.value(2).toDouble() / mesh->radius));
-    mount.rotate(QQuaternion::fromEulerAngles(static_cast<float>(installation.value(0).toDouble()),static_cast<float>(installation.value(1).toDouble()),static_cast<float>(installation.value(2).toDouble()))); mount.scale(static_cast<float>(config.value("model_scale",1.).toDouble() / mesh->radius)); if (config.value("auto_center",true).toBool()) mount.translate(-mesh->center);
-    const auto panValue = camera_.value("pan").toList(); const QVector3D center(static_cast<float>(target.value(0).toDouble()),static_cast<float>(target.value(1).toDouble()),static_cast<float>(target.value(2).toDouble()));
-    const auto azimuth = camera_.value("azimuth",38.).toDouble() * std::numbers::pi / 180., elevation = camera_.value("elevation",24.).toDouble() * std::numbers::pi / 180., distance = camera_.value("distance",4.5).toDouble();
-    QMatrix4x4 view; view.translate(static_cast<float>(panValue.value(0).toDouble()),static_cast<float>(panValue.value(1).toDouble()),0.f); view.lookAt(center + QVector3D(static_cast<float>(distance * std::cos(elevation) * std::cos(azimuth)),static_cast<float>(distance * std::cos(elevation) * std::sin(azimuth)),static_cast<float>(distance * std::sin(elevation))),center,{0,0,1});
-    QMatrix4x4 projection; const auto aspect = static_cast<float>(width() / height());
-    if (config.value("projection") == "orthographic") { const float span = static_cast<float>(distance * .42); projection.ortho(-span * aspect,span * aspect,-span,span,.01f,20000.f); } else projection.perspective(42.f,aspect,.01f,20000.f);
+    const auto target = config.value("camera_target").toList();
+    const QVector3D center(static_cast<float>(target.value(0).toDouble()),static_cast<float>(target.value(1).toDouble()),static_cast<float>(target.value(2).toDouble()));
+    const auto mount = meshMount(config,*mesh,1. / mesh->radius), view = camera_.view(center);
+    const auto projection = camera_.projection(width() / height(),config.value("projection").toString(),.01f,20000.f);
     const auto model = pose * mount, transform = projection * view;
     const auto project = [&](const QVector3D &p) { const auto v = transform * QVector4D(p,1.f); if (v.w() <= .001f) return QPointF(-1e6,-1e6); return QPointF((v.x() / v.w() + 1.) * width() / 2.,(1. - v.y() / v.w()) * height() / 2.); };
     struct Face { QVector3D a,b,c; float depth; QColor color; }; QVector<Face> faces; faces.reserve(mesh->triangles.size());
@@ -305,6 +357,148 @@ QSGNode *NativeAttitude::updatePaintNode(QSGNode *old, UpdatePaintNodeData *)
     if (config.value("show_world_axes",true).toBool()) axes(QMatrix4x4{},QVector3D{},1.2);
     if (config.value("show_model_axes",true).toBool()) axes(pose,QVector3D{},2.2);
     root->appendChildNode(geometry(vertices)); return root;
+}
+
+// Clip in camera space before projecting: geometry crossing the eye plane must
+// not explode across the viewport or turn into a giant filled triangle.
+static QVector<QVector3D> clipNear(const QVector<QVector3D> &polygon, float nearPlane)
+{
+    QVector<QVector3D> result;
+    for (qsizetype index = 0; index < polygon.size(); ++index) {
+        const auto a = polygon[index], b = polygon[(index + 1) % polygon.size()];
+        const bool insideA = a.z() <= -nearPlane, insideB = b.z() <= -nearPlane;
+        if (insideA) result.append(a);
+        if (insideA != insideB) result.append(a + (b - a) * ((-nearPlane - a.z()) / (b.z() - a.z())));
+    }
+    return result;
+}
+
+NativeSixDof::NativeSixDof(QQuickItem *parent) : QQuickPaintedItem(parent) { setAntialiasing(true); setClip(true); resetCamera(); }
+void NativeSixDof::setData(const QVariantMap &value)
+{
+    if (data_ == value) return;
+    const auto previousToken = data_.value("reset_token");
+    data_ = value;
+    const auto model = value.value("mesh").value<MeshPtr>(); if (model) mesh_ = model;
+    // A different node (or a reconfigured model) restores the view defaults.
+    if (previousToken != value.value("reset_token")) restoreDefaults();
+    update(); emit dataChanged();
+}
+void NativeSixDof::setSettings(const QVariantMap &value)
+{
+    if (settings_ == value) return;
+    const auto previous = settings_; settings_ = value;
+    applyAppearance();
+    // Only a changed camera default re-seats the view. Background, grid and
+    // model edits keep the orbit the user has established.
+    if (previous.value("camera_azimuth") != value.value("camera_azimuth")
+        || previous.value("camera_elevation") != value.value("camera_elevation")
+        || previous.value("camera_distance_m") != value.value("camera_distance_m")) resetCamera();
+    emit settingsChanged();
+}
+void NativeSixDof::setCamera(const QVariantMap &value) { camera_.apply(value); update(); emit cameraChanged(); }
+void NativeSixDof::resetCamera() { camera_.reset({{"azimuth",settings_.value("camera_azimuth",38.)},{"elevation",settings_.value("camera_elevation",24.)},{"distance",settings_.value("camera_distance_m",.65)},{"pan",QVariantList{0.,0.}}},.001,1000000.); update(); emit cameraChanged(); }
+void NativeSixDof::applyAppearance()
+{
+    transparency_ = settings_.value("model_transparency",.65).toDouble();
+    gridVisible_ = settings_.value("show_grid",true).toBool();
+    modelAxesVisible_ = settings_.value("show_model_axes",true).toBool();
+    worldAxesVisible_ = settings_.value("show_world_axes",true).toBool();
+}
+void NativeSixDof::restoreDefaults()
+{
+    applyAppearance();
+    // The explicit reset button restores the declared camera as well.
+    resetCamera();
+}
+void NativeSixDof::orbit(double dx, double dy) { camera_.orbit(dx,dy); update(); emit cameraChanged(); }
+void NativeSixDof::pan(double dx, double dy) { camera_.pan(dx,dy,height()); update(); emit cameraChanged(); }
+void NativeSixDof::dolly(double factor) { camera_.dolly(factor); update(); emit cameraChanged(); }
+
+void NativeSixDof::paint(QPainter *painter)
+{
+    if (width() < 1. || height() < 1. || !mesh_) return;
+    painter->fillRect(boundingRect(),QColor(settings_.value("background","#14212D").toString()));
+    const auto config = data_.value("config").toMap(), state = data_.value("state").toMap();
+    const auto target = settings_.value("camera_target",QVariantList{0.,0.,0.}).toList();
+    const QVector3D center(static_cast<float>(target.value(0).toDouble()),static_cast<float>(target.value(1).toDouble()),static_cast<float>(target.value(2).toDouble()));
+    constexpr float nearPlane = .00001f;
+    const auto view = camera_.view(center), projection = camera_.projection(width() / height(),settings_.value("projection","orthographic").toString(),nearPlane,1e9f);
+    const auto project = [&](const QVector3D &cameraPoint) { const auto value = projection * QVector4D(cameraPoint,1.f); return QPointF((value.x() / value.w() + 1.) * width() / 2.,(1. - value.y() / value.w()) * height() / 2.); };
+    const auto line = [&](QVector3D from, QVector3D to, const QColor &color, double penWidth) {
+        from = view.map(from); to = view.map(to);
+        if (from.z() > -nearPlane && to.z() > -nearPlane) return;
+        if ((from.z() > -nearPlane) != (to.z() > -nearPlane)) {
+            const auto intersection = from + (to - from) * ((-nearPlane - from.z()) / (to.z() - from.z()));
+            if (from.z() > -nearPlane) from = intersection; else to = intersection;
+        }
+        painter->setPen(QPen(color,penWidth)); painter->drawLine(project(from),project(to));
+    };
+    const auto spacing = settings_.value("grid_spacing_m",.1).toDouble();
+    const auto cells = std::clamp(settings_.value("grid_cells",10).toInt(),1,100);
+    const auto extent = static_cast<float>(spacing * cells);
+    painter->setRenderHint(QPainter::Antialiasing,true);
+    if (gridVisible_) {
+        const QColor color(settings_.value("grid_color","#425A6C").toString());
+        for (int index = -cells; index <= cells; ++index) {
+            const auto at = static_cast<float>(index * spacing);
+            line({at,-extent,0},{at,extent,0},color,index == 0 ? 1.1 : .6);
+            line({-extent,at,0},{extent,at,0},color,index == 0 ? 1.1 : .6);
+        }
+    }
+    QMatrix4x4 pose;
+    const auto rows = state.value("matrix").toList(), position = state.value("position_m",QVariantList{0.,0.,0.}).toList();
+    if (!rows.isEmpty()) for (int row = 0; row < 3; ++row) for (int col = 0; col < 3; ++col) pose(row,col) = rows.value(row).toList().value(col).toFloat();
+    pose.setColumn(3,QVector4D(position.value(0).toFloat(),position.value(1).toFloat(),position.value(2).toFloat(),1.f));
+    const bool frozen = state.value("frozen").toBool(), valid = state.value("valid",true).toBool() || frozen;
+    const auto modelScale = config.value("model_scale",1.).toDouble();
+    const bool builtin = config.value("model_file").toString().isEmpty();
+    // Imported models keep the attitude radius normalization; the unit cube is
+    // already a unit body whose real size is configured in meters.
+    const auto unitScale = builtin ? config.value("cube_size_m",.1).toDouble() : .1 / mesh_->radius;
+    const auto model = pose * meshMount(config,*mesh_,unitScale);
+    const auto towardCamera = view.inverted().mapVector(QVector3D(0,0,1)).normalized();
+    const auto eye = view.inverted().map(QVector3D{});
+    struct Face { QVector3D a,b,c; float depth; QColor color; };
+    QVector<Face> faces;
+    if (valid && transparency_ < 1.) {
+        faces.reserve(mesh_->triangles.size());
+        const QColor base(frozen ? "#7E8990" : settings_.value("model_color","#80BCD5").toString());
+        const auto light = QVector3D(1,-2,3).normalized();
+        for (const auto &triangle : mesh_->triangles) {
+            const auto a = model.map(mesh_->vertices[triangle[0]]), b = model.map(mesh_->vertices[triangle[1]]), c = model.map(mesh_->vertices[triangle[2]]);
+            const auto normal = QVector3D::normal(a,b,c);
+            // The closed unit cube draws only its facing surfaces; rear faces
+            // would read as a second shell at high transparency.
+            const auto sight = settings_.value("projection") == "orthographic" ? towardCamera : eye - (a + b + c) / 3.f;
+            if (builtin && QVector3D::dotProduct(normal,sight) <= 0.f) continue;
+            const auto shade = .36f + .64f * std::abs(QVector3D::dotProduct(normal,light));
+            faces.append({view.map(a),view.map(b),view.map(c),view.map((a + b + c) / 3.f).z(),QColor::fromRgbF(base.redF() * shade,base.greenF() * shade,base.blueF() * shade,1. - transparency_)});
+        }
+        std::sort(faces.begin(),faces.end(),[](const auto &a, const auto &b) { return a.depth < b.depth; });
+        painter->setRenderHint(QPainter::Antialiasing,false); painter->setPen(Qt::NoPen);
+        for (const auto &face : faces) {
+            const auto clipped = clipNear({face.a,face.b,face.c},nearPlane);
+            if (clipped.size() < 3) continue;
+            QPolygonF polygon; for (const auto &point : clipped) polygon.append(project(point));
+            painter->setBrush(face.color); painter->drawPolygon(polygon);
+        }
+    }
+    painter->setRenderHint(QPainter::Antialiasing,true); painter->setBrush(Qt::NoBrush);
+    const auto axes = [&](const QMatrix4x4 &transform, float length, double penWidth, bool world) {
+        const auto origin = transform.map(QVector3D{});
+        const QVector3D vectors[]{{length,0,0},{0,length,0},{0,0,length}};
+        const QColor colors[]{QColor("#F08080"),QColor("#79D69D"),QColor("#73B8FF")};
+        for (int index = 0; index < 3; ++index) {
+            const auto endpoint = transform.map(vectors[index]);
+            line(origin,endpoint,colors[index],penWidth);
+            if (view.map(endpoint).z() > -nearPlane) continue;
+            const auto screen = project(view.map(endpoint));
+            if (boundingRect().contains(screen)) painter->drawText(screen + QPointF(5,-5),QString(world ? "W" : "") + QString("XYZ").at(index));
+        }
+    };
+    if (worldAxesVisible_) axes(QMatrix4x4{},static_cast<float>(spacing * 2.),1.3,true);
+    if (valid && !frozen && modelAxesVisible_) axes(pose,static_cast<float>((builtin ? config.value("cube_size_m",.1).toDouble() * .85 : .14) * modelScale),2.4,false);
 }
 
 }

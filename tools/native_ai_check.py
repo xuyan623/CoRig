@@ -111,7 +111,7 @@ def main():
         client.call('library.favorite', {'plugin': 'plot.curves', 'enabled': True})
         client.call('library.configure', {'view': 'list', 'size': 1.2})
         client.call('library.configure', {'view': 'grid', 'size': 1.0})
-        check(len(registry) == 78, 'plugins, properties, actions and UI declarations are discoverable')
+        check(len(registry) == 80, 'plugins, properties, actions and UI declarations are discoverable')
 
         client.call('project.new', {'name': 'AI 协作完整流程'})
         # Workspace and container extension routes are exercised through the

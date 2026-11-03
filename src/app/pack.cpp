@@ -42,7 +42,7 @@ int main(int argc, char **argv)
             files.insert(library,read(args[3]));
             const QMap<QString,QString> views{{"connection","ConnectionView.qml"},{"control","ControlView.qml"},{"console","ConsoleView.qml"},
                 {"recorder","RecorderView.qml"},{"playback","PlaybackView.qml"},{"values","ValueView.qml"},{"timer","ValueView.qml"},
-                {"plot","PlotView.qml"},{"attitude","AttitudeView.qml"},{"terminal","TerminalView.qml"}};
+                {"plot","PlotView.qml"},{"attitude","AttitudeView.qml"},{"terminal","TerminalView.qml"},{"xy","XYView.qml"},{"sixdof","SixDofView.qml"}};
             int count = 0;
             for (const auto &entry : QJsonDocument::fromJson(read(args[2])).toVariant().toList()) {
                 auto spec = entry.toMap(); QVariantMap declared;

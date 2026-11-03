@@ -47,6 +47,7 @@ private slots:
     void chunkedProtocol();
     void ringsAndFft();
     void geometryAndRotations();
+    void sixDofAndXyNodes();
     void terminal();
     void localPython();
     void localPythonBooleanUpdates();
@@ -176,6 +177,66 @@ void ExecutionTest::geometryAndRotations()
     }
     const auto a = corig::checkedQuaternion({1.,2.,3.,4.}).toRotationMatrix(), b = corig::checkedQuaternion({-1.,-2.,-3.,-4.}).toRotationMatrix();
     QCOMPARE(a,b); QVERIFY_EXCEPTION_THROWN(corig::checkedQuaternion({0.,0.,0.,0.}),corig::Error);
+}
+
+void ExecutionTest::sixDofAndXyNodes()
+{
+    corig::Catalog catalog;
+    const auto make = [&](const QString &plugin, const QVariantMap &config = {}) { return corig::makeNode(node("probe",plugin,config),catalog,{}); };
+    const auto state = [](corig::Node &instance) { return instance.snapshot().value("state").toMap(); };
+    const auto close = [](double a, double b) { return std::abs(a - b) < 1e-5; };
+    auto pose = make("plot.sixdof",{{"angle_unit","deg"},{"position_unit","mm"}});
+    QVERIFY(pose); QCOMPARE(pose->ports().size(),6);
+    pose->execute({{"position_x",500.},{"position_y",-100.},{"position_z",200.},{"yaw",90.}},{},corig::BatchContext{1,1.});
+    const auto euler = state(*pose);
+    QVERIFY(euler.value("valid").toBool());
+    const auto position = euler.value("position_m").toList();
+    QVERIFY(close(position[0].toDouble(),.5)); QVERIFY(close(position[1].toDouble(),-.1)); QVERIFY(close(position[2].toDouble(),.2));
+    const auto matrix = euler.value("matrix").toList();
+    QVERIFY(close(matrix[0].toList()[1].toDouble(),-1.)); QVERIFY(close(matrix[1].toList()[0].toDouble(),1.));
+    // A quaternion normalizes to the same rotation instead of a second convention.
+    auto quaternion = make("plot.sixdof",{{"mode","quaternion"}});
+    QCOMPARE(quaternion->ports().size(),7);
+    QVERIFY(!state(*quaternion).value("valid").toBool());
+    quaternion->execute({{"w",std::sqrt(.5)},{"z",std::sqrt(.5)}},{},corig::BatchContext{2,2.});
+    const auto normalized = state(*quaternion).value("matrix").toList();
+    for (int row = 0; row < 3; ++row) for (int column = 0; column < 3; ++column)
+        QVERIFY(close(normalized[row].toList()[column].toDouble(),matrix[row].toList()[column].toDouble()));
+    // Losing tracking keeps the last pose frozen until a valid recovery.
+    auto tracked = make("plot.sixdof",{{"mode","quaternion"},{"status_inputs",true}});
+    QCOMPARE(tracked->ports().size(),10);
+    // Status inputs count only when the graph actually wires them.
+    tracked->setConnections({"connected","tracking_valid","reason"});
+    tracked->execute({{"w",1.},{"position_x",.7},{"connected",true},{"tracking_valid",true}},{},corig::BatchContext{10,10.});
+    const auto last = state(*tracked).value("position_m");
+    tracked->execute({{"position_x",99.},{"tracking_valid",false},{"reason","定位丢失"}},{},corig::BatchContext{11,11.});
+    QVERIFY(state(*tracked).value("frozen").toBool());
+    QCOMPARE(state(*tracked).value("position_m"),last);
+    QCOMPARE(state(*tracked).value("error").toString(),QString("定位丢失"));
+    tracked->execute({{"connected",true},{"tracking_valid",true},{"position_x",.9}},{},corig::BatchContext{13,13.});
+    QVERIFY(state(*tracked).value("valid").toBool()); QVERIFY(!state(*tracked).value("frozen").toBool());
+    // Parallel axes or a zero reference are rejected instead of silently repaired.
+    QVERIFY_EXCEPTION_THROWN(make("plot.sixdof",{{"axis_x","up"}}),corig::Error);
+    QVERIFY_EXCEPTION_THROWN(make("plot.sixdof",{{"reference_quaternion",QVariantList{0.,0.,0.,0.}}}),corig::Error);
+    // The built-in body pages geometry exactly like the attitude view.
+    QVariant geometry;
+    pose->action("geometry",{{"component","vertices"}},{},geometry);
+    QCOMPARE(geometry.toMap().value("total").toInt(),8);
+    for (const auto &vertex : geometry.toMap().value("values").toList()) for (const auto &coordinate : vertex.toList()) QVERIFY(close(std::abs(coordinate.toDouble()),.5));
+    pose->action("geometry",{{"component","triangles"}},{},geometry);
+    QCOMPARE(geometry.toMap().value("total").toInt(),12);
+    // XY keeps the last invalid input out of the display state.
+    auto xy = make("plot.xy");
+    xy->setConnections({"xy","pressed"});
+    xy->execute({{"xy",QVariantList{.25,-.5}}},{},corig::BatchContext{1,1.});
+    auto xyState = state(*xy);
+    QVERIFY(xyState.value("valid").toBool()); QVERIFY(xyState.value("active").toBool()); QVERIFY(!xyState.value("pressed").toBool());
+    QCOMPARE(xyState.value("xy").toList().size(),2);
+    QVERIFY(close(xyState.value("xy").toList()[0].toDouble(),.25) && close(xyState.value("xy").toList()[1].toDouble(),-.5));
+    xy->execute({{"xy",QVariantList{1.,2.,3.}}},{},corig::BatchContext{2,2.});
+    QVERIFY(!state(*xy).value("valid").toBool());
+    xy->execute({{"xy",QVariantList{}},{"pressed",true}},{},corig::BatchContext{3,3.});
+    QVERIFY(!state(*xy).value("valid").toBool()); QVERIFY(state(*xy).value("pressed").toBool());
 }
 
 void ExecutionTest::terminal()

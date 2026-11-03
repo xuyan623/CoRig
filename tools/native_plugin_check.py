@@ -124,7 +124,7 @@ def main():
         required = {'plugin.state', 'plugin.import', 'plugin.enable', 'plugin.remove', 'plugin.export', 'update.check', 'update.install', 'app.restart'}
         check(required <= set(client.call('schema')['commands']), 'AI discovery exposes the new plugin and installation commands')
         official = client.call('registry')
-        check(len(official) == 78 and all(p['implementation'] == 'native' and not p['builtin'] for p in official), 'all 78 shipped functional nodes are external native plugins')
+        check(len(official) == 80 and all(p['implementation'] == 'native' and not p['builtin'] for p in official), 'all 80 shipped functional nodes are external native plugins')
         check(not state['python'], 'official functionality starts without a selected Python interpreter')
         client.call('plugin.settings')
         client.call('controls.click', {'id':'plugins.collapse_all'})

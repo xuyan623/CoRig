@@ -128,12 +128,12 @@ void PluginTest::enableAndRemovalPreserveReferences()
     validateProject(embedded,store.catalog(embedded));
     store.setEnabled({"function.sin"},true,emptyProject());
     store.remove("org.corig.function.sin",emptyProject());
-    QCOMPARE(store.catalog(emptyProject()).describe().size(),77);
+    QCOMPARE(store.catalog(emptyProject()).describe().size(),79);
     validateProject(embedded,store.catalog(embedded));
     QCOMPARE(store.find("function.sin",embedded).id(),QString("org.corig.function.sin"));
     // A later launch respects removal; first-launch defaults are not repeated.
     PluginStore next(directory.filePath("plugins"),settings);
-    QCOMPARE(next.catalog(emptyProject()).describe().size(),77);
+    QCOMPARE(next.catalog(emptyProject()).describe().size(),79);
 }
 
 void PluginTest::folderClassificationAndOptionalDependencies()

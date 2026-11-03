@@ -66,7 +66,7 @@ def main():
         check(executable.name == 'CoRig.exe' and (deployment / 'CoRig-cli.exe').is_file(), 'deployed GUI and CLI use the CoRig product names')
         check(c.call('app.state')['application'] == c.call('schema')['application'] == 'CoRig', 'GUI state and API schema identify the current CoRig application')
         check(c.call('app.state')['python'] == '', 'deployed application starts without a Python interpreter')
-        check(len(c.call('registry')) == 78, 'all 78 official plugin declarations are available in deployment')
+        check(len(c.call('registry')) == 80, 'all 80 official plugin declarations are available in deployment')
         for name in ('SerialPlot', 'FunctionLab', 'RecordPlayback'):
             c.call('project.open', {'path': str(deployment / 'examples' / (name + '.crpj'))})
             check(c.call('project.validate')['valid'], name + ' opens as a native v3 project')

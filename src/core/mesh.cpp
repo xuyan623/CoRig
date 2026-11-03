@@ -43,6 +43,19 @@ MeshPtr airplane()
     return model;
 }
 
+MeshPtr cube()
+{
+    static const MeshPtr model = [] {
+        auto mesh = std::make_shared<Mesh>(); mesh->name = "正方体"; mesh->digest = "builtin-unit-cube-v1";
+        mesh->vertices = {{-.5f,-.5f,-.5f},{.5f,-.5f,-.5f},{.5f,.5f,-.5f},{-.5f,.5f,-.5f},
+                          {-.5f,-.5f,.5f},{.5f,-.5f,.5f},{.5f,.5f,.5f},{-.5f,.5f,.5f}};
+        mesh->triangles = {{0,2,1},{0,3,2},{4,5,6},{4,6,7},{0,1,5},{0,5,4},
+                           {1,2,6},{1,6,5},{2,3,7},{2,7,6},{3,0,4},{3,4,7}};
+        return finalizeMesh(mesh);
+    }();
+    return model;
+}
+
 static QVector<std::array<int,3>> triangulate(QVector<int> indices, const QVector<QVector3D> &vertices)
 {
     if (indices.size() < 3 || indices.size() > 4096) throw Error("OBJ 面片需要 3～4096 个顶点");

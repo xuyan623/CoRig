@@ -19,7 +19,7 @@ private slots:
 void CoreTest::declarations()
 {
     corig::Catalog catalog;
-    QCOMPARE(catalog.describe().size(),78);
+    QCOMPARE(catalog.describe().size(),80);
     QVERIFY(!catalog.search("正弦").isEmpty());
     QVERIFY(!catalog.search("lowpass").isEmpty());
     const auto config = catalog.checkedConfig("source.constant", {{"values",QVariantMap{{"x",3.}, {"y",4.}}}});

@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QPainterPath>
+#include <QMatrix4x4>
 #include <QQuickPaintedItem>
 
 namespace corig {
@@ -118,6 +119,27 @@ private:
     QVariantMap data_;
 };
 
+// Every 3D view clamps and moves its camera the same way; only the defaults,
+// the distance range and the projection span differ per view.
+class SceneCamera {
+public:
+    void reset(const QVariantMap &defaults, double minimumDistance, double maximumDistance);
+    void apply(const QVariantMap &value);
+    void orbit(double dx, double dy);
+    void pan(double dx, double dy, double viewportHeight);
+    void dolly(double factor);
+    QVariantMap state() const { return state_; }
+    QMatrix4x4 view(const QVector3D &target) const;
+    QMatrix4x4 projection(double aspect, const QString &mode, float nearPlane, float farPlane) const;
+private:
+    QVariantMap state_;
+    double minimumDistance_ = 1.05, maximumDistance_ = 10000.;
+};
+
+// Model installation transform shared by 3D views; the unit scale is the only
+// per-view difference between a normalized model and a metric one.
+QMatrix4x4 meshMount(const QVariantMap &config, const Mesh &mesh, double unitScale);
+
 class NativeAttitude : public QQuickItem {
     Q_OBJECT
     Q_PROPERTY(QVariantMap observation READ data WRITE setData NOTIFY dataChanged)
@@ -125,7 +147,7 @@ class NativeAttitude : public QQuickItem {
 public:
     explicit NativeAttitude(QQuickItem *parent = nullptr);
     QVariantMap data() const { return data_; }
-    QVariantMap camera() const { return camera_; }
+    QVariantMap camera() const { return camera_.state(); }
     void setData(const QVariantMap &value);
     void setCamera(const QVariantMap &value);
     Q_INVOKABLE void resetCamera();
@@ -138,7 +160,46 @@ signals:
 protected:
     QSGNode *updatePaintNode(QSGNode *old, UpdatePaintNodeData *) override;
 private:
-    QVariantMap data_, camera_;
+    QVariantMap data_;
+    SceneCamera camera_;
+};
+
+// 6DoF draws with QPainter because near-plane clipping and transparent faces
+// are cheaper to keep exact here than to rebuild in the scene graph.
+class NativeSixDof : public QQuickPaintedItem {
+    Q_OBJECT
+    Q_PROPERTY(QVariantMap observation READ data WRITE setData NOTIFY dataChanged)
+    Q_PROPERTY(QVariantMap settings READ settings WRITE setSettings NOTIFY settingsChanged)
+    Q_PROPERTY(QVariantMap camera READ camera WRITE setCamera NOTIFY cameraChanged)
+public:
+    explicit NativeSixDof(QQuickItem *parent = nullptr);
+    QVariantMap data() const { return data_; }
+    QVariantMap settings() const { return settings_; }
+    QVariantMap camera() const { return camera_.state(); }
+    void setData(const QVariantMap &value);
+    void setSettings(const QVariantMap &value);
+    void setCamera(const QVariantMap &value);
+    Q_INVOKABLE void resetCamera();
+    Q_INVOKABLE void restoreDefaults();
+    Q_INVOKABLE void orbit(double dx, double dy);
+    Q_INVOKABLE void pan(double dx, double dy);
+    Q_INVOKABLE void dolly(double factor);
+    void paint(QPainter *painter) override;
+signals:
+    void dataChanged();
+    void settingsChanged();
+    void cameraChanged();
+    void appearanceChanged();
+private:
+    // Applies the rendering fields without touching the camera; the explicit
+    // reset and a changed camera default decide when the view re-seats.
+    void applyAppearance();
+    QVariantMap data_, settings_;
+    SceneCamera camera_;
+    MeshPtr mesh_;
+    double transparency_ = .65;
+    bool gridVisible_ = true, modelAxesVisible_ = true, worldAxesVisible_ = true;
+    QString resetToken_;
 };
 
 }

@@ -162,7 +162,7 @@ def main():
         qt_hash = hashlib.sha256((installed / 'Qt6Core.dll').read_bytes()).hexdigest()
         client, process = launch()
         check(api('update.state')['supported'], 'installed app discovers the real IFW maintenance executable')
-        check(len(api('registry')) == 78 and not api('app.state')['python'],
+        check(len(api('registry')) == 80 and not api('app.state')['python'],
               'installed application runs all official declarations with no developer Qt or Python paths')
         api('preferences.set', {'theme': 'light'})
         if args.disable_plugin:

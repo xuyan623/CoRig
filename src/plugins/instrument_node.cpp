@@ -6,6 +6,7 @@
 #include <QFileInfo>
 #include <QSaveFile>
 #include <QTextStream>
+#include <QUuid>
 #include <numbers>
 #include <cmath>
 #include <map>
@@ -124,6 +125,18 @@ private:
     mutable quint64 lastVersion_ = ~quint64(0);
 };
 
+// Paged geometry is one contract for every 3D instrument, so attitude and
+// 6DoF views answer the same action without duplicating the paging rules.
+static QVariantMap pagedGeometry(const MeshPtr &mesh, const QVariantMap &args)
+{
+    const auto offset = args.value("offset",0).toLongLong(), limit = args.value("limit",10000).toLongLong();
+    QVariantList values; const bool vertices = args.value("component","vertices") == "vertices";
+    // Each geometry entry stays one triplet in the paged response.
+    if (vertices) for (auto i = offset; i < std::min<qsizetype>(mesh->vertices.size(),offset + limit); ++i) { const auto v = mesh->vertices[i]; values.append(QVariant(QVariantList{v.x(),v.y(),v.z()})); }
+    else for (auto i = offset; i < std::min<qsizetype>(mesh->triangles.size(),offset + limit); ++i) { const auto f = mesh->triangles[i]; values.append(QVariant(QVariantList{f[0],f[1],f[2]})); }
+    return {{"values",values},{"total",vertices ? mesh->vertices.size() : mesh->triangles.size()},{"model",mesh->describe()}};
+}
+
 class AttitudeNode final : public Node {
 public:
     AttitudeNode(QVariantMap design, QVariantMap definition, QVector<Port> ports, NodeHost host)
@@ -148,14 +161,7 @@ public:
     }
     NodeResult action(const QString &name, const QVariantMap &args, const BatchContext &context, QVariant &result) override
     {
-        if (name == "geometry") {
-            const auto offset = args.value("offset",0).toLongLong(), limit = args.value("limit",10000).toLongLong();
-            QVariantList values; const bool vertices = args.value("component","vertices") == "vertices";
-            // Each geometry entry stays one triplet in the paged response.
-            if (vertices) for (auto i = offset; i < std::min<qsizetype>(mesh_->vertices.size(),offset + limit); ++i) { const auto v = mesh_->vertices[i]; values.append(QVariant(QVariantList{v.x(),v.y(),v.z()})); }
-            else for (auto i = offset; i < std::min<qsizetype>(mesh_->triangles.size(),offset + limit); ++i) { const auto f = mesh_->triangles[i]; values.append(QVariant(QVariantList{f[0],f[1],f[2]})); }
-            result = QVariantMap{{"values",values},{"total",vertices ? mesh_->vertices.size() : mesh_->triangles.size()},{"model",mesh_->describe()}}; return {};
-        }
+        if (name == "geometry") { result = pagedGeometry(mesh_,args); return {}; }
         return Node::action(name,args,context,result);
     }
 protected:
@@ -180,6 +186,112 @@ private:
     }
     MeshPtr mesh_;
     QMatrix3x3 rotation_, mapping_, reference_;
+};
+
+// A 6DoF pose keeps interpretation in the node and leaves camera and appearance
+// to each view; a frozen transform is reported so it never reads as live data.
+class SixDofNode final : public Node {
+public:
+    SixDofNode(QVariantMap design, QVariantMap definition, QVector<Port> ports, NodeHost host)
+        : Node(std::move(design),std::move(definition),std::move(ports),std::move(host)),
+          resetToken_(QUuid::createUuid().toString(QUuid::WithoutBraces))
+    {
+        static const bool registered = QMetaType::registerConverter<MeshPtr,QVariantMap>([](const MeshPtr &mesh) { return mesh->describe(); });
+        Q_UNUSED(registered);
+        mapping_ = axisMapping(config_); reference_ = checkedQuaternion(config_.value("reference_quaternion").toList()).toRotationMatrix();
+        const auto file = config_.value("model_file").toString();
+        mesh_ = file.isEmpty() ? cube() : loadMesh(host_.resource(file),QFileInfo(file).fileName());
+        evaluate();
+    }
+    void configure(Node &prepared) override
+    {
+        auto &candidate = dynamic_cast<SixDofNode &>(prepared);
+        mesh_ = candidate.mesh_; mapping_ = candidate.mapping_; reference_ = candidate.reference_;
+        Node::configure(prepared); evaluate();
+    }
+    QVariantMap view(const QString &, const QVariantMap &) const override
+    {
+        return {{"kind","sixdof"},{"mesh",QVariant::fromValue(mesh_)},{"config",config_},{"state",state_},{"reset_token",resetToken_}};
+    }
+    NodeResult action(const QString &name, const QVariantMap &args, const BatchContext &context, QVariant &result) override
+    {
+        if (name == "geometry") { result = pagedGeometry(mesh_,args); return {}; }
+        return Node::action(name,args,context,result);
+    }
+protected:
+    NodeResult process(const Values &, const BatchContext &context, bool) override { evaluate(); state_["time"] = context.time; return {}; }
+private:
+    void evaluate()
+    {
+        // Invalid device status preserves the last valid transform, while marking
+        // it frozen so the renderer cannot present it as current data.
+        if (config_.value("status_inputs").toBool() &&
+            (!connected_.contains("connected") || !connected_.contains("tracking_valid") ||
+             !inputs_.value("connected").toBool() || !inputs_.value("tracking_valid").toBool())) {
+            state_["valid"] = false; state_["frozen"] = state_.contains("matrix");
+            state_["error"] = inputs_.value("reason").toString();
+            if (state_["error"].toString().isEmpty())
+                state_["error"] = inputs_.value("connected").toBool() ? "定位丢失" : "已断连／等待状态输入";
+            state_["model"] = mesh_->describe(); return;
+        }
+        state_["frozen"] = false;
+        try {
+            QMatrix3x3 input;
+            if (config_.value("mode") == "quaternion") input = checkedQuaternion({number("w"),number("x"),number("y"),number("z")}).toRotationMatrix();
+            else {
+                const auto scale = config_.value("angle_unit") == "deg" ? std::numbers::pi / 180. : 1.;
+                input = eulerMatrix(number("roll") * scale,number("pitch") * scale,number("yaw") * scale,config_.value("euler_order").toString(),config_.value("euler_frame").toString());
+            }
+            if (config_.value("direction") == "world_to_body") input = input.transposed();
+            const auto rotation = reference_.transposed() * mapping_ * input * mapping_.transposed();
+            const auto unit = config_.value("position_unit") == "mm" ? .001 : 1.;
+            const QVector3D rawPosition(static_cast<float>(number("position_x") * unit),static_cast<float>(number("position_y") * unit),static_cast<float>(number("position_z") * unit));
+            const auto basis = reference_.transposed() * mapping_;
+            QVector3D position;
+            for (int row = 0; row < 3; ++row) {
+                position[row] = 0.f;
+                for (int column = 0; column < 3; ++column) {
+                    if (!std::isfinite(rotation(row,column))) throw Error("姿态超出可显示范围");
+                    position[row] += basis(row,column) * rawPosition[column];
+                }
+                if (!std::isfinite(position[row])) throw Error("位置超出可显示范围");
+            }
+            auto quaternion = QQuaternion::fromRotationMatrix(rotation).normalized();
+            if (quaternion.scalar() < 0.f) quaternion = -quaternion;
+            state_["matrix"] = describeMatrix(rotation);
+            state_["position_m"] = QVariantList{position.x(),position.y(),position.z()};
+            state_["quaternion"] = QVariantList{quaternion.scalar(),quaternion.x(),quaternion.y(),quaternion.z()};
+            state_["valid"] = true; state_["error"] = QString{};
+        } catch (const Error &error) {
+            // Invalid input must not present a stale transform as current data.
+            state_["valid"] = false; state_["error"] = error.message;
+            state_.remove("matrix"); state_.remove("position_m"); state_.remove("quaternion");
+        }
+        state_["model"] = mesh_->describe();
+    }
+    MeshPtr mesh_;
+    QMatrix3x3 mapping_, reference_;
+    QString resetToken_;
+};
+
+// XY observation is display-only: ranges, shape and colors stay per view, and
+// an unconnected gate input reads as active so a bare coordinate still shows.
+class XyNode final : public Node {
+public:
+    using Node::Node;
+    QVariantMap view(const QString &, const QVariantMap &) const override
+    {
+        return {{"state",state_},{"config",config_}};
+    }
+protected:
+    NodeResult process(const Values &, const BatchContext &, bool) override
+    {
+        const auto xy = inputs_.value("xy").toList(); bool valid = xy.size() == 2;
+        for (const auto &item : xy) { bool ok = false; const auto parsed = item.toDouble(&ok); valid = valid && ok && std::isfinite(parsed); }
+        state_ = {{"valid",valid},{"xy",xy},{"active",!connected_.contains("active") || inputs_.value("active").toBool()},
+                  {"pressed",connected_.contains("pressed") && inputs_.value("pressed").toBool()}};
+        return {};
+    }
 };
 
 class TerminalNode final : public Node {
@@ -233,6 +345,8 @@ std::unique_ptr<Node> makeInstrumentNode(QVariantMap design, QVariantMap definit
     const auto type = design.value("plugin").toString();
     if (type == "plot.curves") return std::make_unique<PlotNode>(std::move(design),std::move(definition),std::move(ports),std::move(host));
     if (type == "plot.attitude") return std::make_unique<AttitudeNode>(std::move(design),std::move(definition),std::move(ports),std::move(host));
+    if (type == "plot.xy") return std::make_unique<XyNode>(std::move(design),std::move(definition),std::move(ports),std::move(host));
+    if (type == "plot.sixdof") return std::make_unique<SixDofNode>(std::move(design),std::move(definition),std::move(ports),std::move(host));
     if (type == "terminal.ansi") return std::make_unique<TerminalNode>(std::move(design),std::move(definition),std::move(ports),std::move(host));
     throw Error("未知仪表类型：" + type);
 }

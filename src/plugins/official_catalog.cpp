@@ -76,6 +76,14 @@ QVector<Port> officialPorts(const QVariantMap &spec, const QVariantMap &config, 
         } else {
             for (const auto &name : {"roll","pitch","yaw"}) named(name, "in", "number", name, config.value("angle_unit").toString());
         }
+    } else if (id == "plot.sixdof") {
+        for (const auto &name : {"position_x","position_y","position_z"}) named(name, "in", "number", name, config.value("position_unit").toString());
+        if (config.value("mode") == "quaternion") {
+            for (const auto &name : {"w","x","y","z"}) named(name, "in");
+        } else {
+            for (const auto &name : {"roll","pitch","yaw"}) named(name, "in", "number", name, config.value("angle_unit").toString());
+        }
+        if (config.value("status_inputs").toBool()) { named("connected", "in", "boolean", "连接状态"); named("tracking_valid", "in", "boolean", "定位有效"); named("reason", "in", "string", "状态原因"); }
     } else if (spec.value("dynamic_ports").toBool() && id.startsWith("function.")) {
         for (const auto &name : config.value("inputs").toList()) named(name.toString(), "in");
     }

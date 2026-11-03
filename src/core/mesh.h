@@ -20,6 +20,8 @@ struct Mesh {
 };
 using MeshPtr = std::shared_ptr<const Mesh>;
 MeshPtr airplane();
+// Unit cube centered at the body origin; 6DoF views scale it in meters.
+MeshPtr cube();
 MeshPtr loadMesh(const QByteArray &bytes, const QString &name);
 QMatrix3x3 eulerMatrix(double roll, double pitch, double yaw, const QString &order, const QString &frame);
 QMatrix3x3 axisMapping(const QVariantMap &config);

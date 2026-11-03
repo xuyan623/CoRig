@@ -76,6 +76,7 @@ int main(int argc, char **argv)
         qmlRegisterType<corig::NodeSurface>("CoRig.Native",1,0,"NodeSurface");
         qmlRegisterType<corig::NativePlot>("CoRig.Native",1,0,"NativePlot");
         qmlRegisterType<corig::NativeAttitude>("CoRig.Native",1,0,"NativeAttitude");
+        qmlRegisterType<corig::NativeSixDof>("CoRig.Native",1,0,"NativeSixDof");
         const auto projects = parser.positionalArguments();
         const auto choices = QJsonDocument::fromJson(QByteArray::fromBase64(parser.value("plugin-selections").toLatin1())).toVariant().toMap();
         QVariantMap initialCatalog;

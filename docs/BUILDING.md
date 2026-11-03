@@ -25,7 +25,7 @@ cd CoRig
 .\tools\build_native.ps1 -QtPrefix C:\Qt\6.12.0\msvc2022_64 -Test
 ```
 
-脚本在当前进程导入 MSVC 环境，使用 CMake/Ninja 构建，并运行八套 CTest。输出在 `build/native/`，包括 GUI、CLI、CoRigSdk.dll、78 个官方插件包、公开 SDK 和测试程序。
+脚本在当前进程导入 MSVC 环境，使用 CMake/Ninja 构建，并运行八套 CTest。输出在 `build/native/`，包括 GUI、CLI、CoRigSdk.dll、80 个官方插件包、公开 SDK 和测试程序。
 
 构建和官方 C++ 测试无需安装 Python。若需验证用户 Python 插件，可设置 `CORIG_TEST_PYTHON` 为实际解释器。界面与性能验收驱动使用 Python 标准库；本机 SSH 服务器验收额外需要 Paramiko。
 
