@@ -180,6 +180,20 @@ def main():
         client.call('ui.view.bind', {'id': 'extra', 'node': 'alternate', 'view': extra_view})
         rebound = next(i for i in client.call('project.get')['ui']['items'] if i['id'] == 'extra')
         check(rebound['node'] == 'alternate', 'view binding changes preserve the item ID and layout')
+        appearance = client.call('ui.view.appearance', {'node': 'input', 'view': extra_view})
+        check('schema' in appearance and 'properties' in appearance,
+              'unplaced view appearance exposes its schema and checked values')
+        stored = dict(appearance['properties'])
+        picked = next(((key, value) for key, value in stored.items() if isinstance(value, (str, int, float)) and not isinstance(value, bool)), None)
+        check(picked is not None, 'unplaced view declares a scalar appearance value')
+        key, value = picked
+        replacement = value + 1 if isinstance(value, (int, float)) else value + ' appearance'
+        patched = client.call('ui.view.appearance', {'node': 'input', 'view': extra_view, 'changes': {key: replacement}})
+        check(patched.get('updated') and patched['properties'].get(key) == replacement,
+              'view appearance writes through the shared validation path')
+        again = client.call('ui.view.appearance', {'node': 'input', 'view': extra_view})
+        check(again['properties'].get(key) == replacement, 'view appearance round-trips on a fresh read')
+        reject('ui.view.appearance', {'node': 'input', 'view': extra_view, 'changes': {'x': 20}})
         client.call('ui.item.remove', {'id': 'extra'})
         client.call('sync.plan', {'direction': 'ui_to_graph'})
 
