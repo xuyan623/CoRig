@@ -2,6 +2,21 @@
 
 [项目首页](../README.md) · [GitHub Releases](https://github.com/xuyan623/CoRig/releases)
 
+## v0.4.3
+
+- 新增官方节点 `plot.sixdof` 与 `plot.xy`：六自由度姿态视图与 X-Y 示波视图，官方节点 78→80。
+- 视图相机手势统一为拖拽旋转、滚轮缩放、自动取景；`plot.attitude` 与 `plot.sixdof` 共用分页几何。
+- 修复 `plot.curves` 右侧通道勾选和颜色被轮询重建覆盖：滚动或连续点击仍保持用户选择，提交按任务结果回读校正、失败回滚。
+- 修复 `io.serial` 端口列表只在打开时枚举一次：支持手动刷新，下拉展开时重新枚举，连接前校验端口；首次连接等 `runtime.start` 完成后再连接。
+- 修复用户视图桥缺少 `configure`/`commit` 与运行状态：补齐 properties/schema/info/editable/pending/runtimeActive/error；新增公开命令 `ui.view.appearance`，工程级视图外观可读写并随工程保存、参与校验。
+- `view.actions` 与 `view.call` 统一为单一动作表并新增 `restore_defaults`；改变外观不再重置相机。
+- `io.ports` 每项标注回环能力，清单末尾提供 `loop://` 回环项。
+- 插件节点属性声明额度 128，超限拒绝。
+- 修复带 `--plugin-selections` 或 `app.restart` 启动并打开工程时进程可能无提示退出：打开失败现在写入 `cache/logs/native.log` 并显示界面通知；原生崩溃写入 `cache/logs/CoRig-crash-时间.log` 与 `.dmp` 并弹窗说明。
+- `plugin.export` 新增 `project` 参数：直接读取工程文件携带的插件包导出到目录，无需先打开工程，可从无法启动的工程取出内嵌包再用 `plugin.import` 安装。
+- 串口刷新按钮此前误显示为节点图图标，现改为圆型回环箭头；恢复默认外观使用同一图标。
+- 文档统一安装版与便携版的数据目录说明。
+
 ## v0.4.2
 
 - 程序、官方插件、用户插件、个人工程与设置全部保存在安装目录内，不再分散到用户数据目录。
