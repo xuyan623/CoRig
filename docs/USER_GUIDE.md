@@ -4,7 +4,7 @@
 
 ## 安装与示例
 
-下载 `CoRigSetup-0.4.2-Windows-x64.exe`，按向导选择安装位置；默认装到当前用户目录 `%LOCALAPPDATA%\Programs\CoRig`，默认无需管理员权限。安装内容分为运行依赖、主程序、官方插件和可选的 C++ 插件开发 SDK。
+下载 `CoRigSetup-0.4.3-Windows-x64.exe`，按向导选择安装位置；默认装到当前用户目录 `%LOCALAPPDATA%\Programs\CoRig`，默认无需管理员权限。安装内容分为运行依赖、主程序、官方插件和可选的 C++ 插件开发 SDK。
 
 也可完整解压 `CoRig-Windows-x64.zip`，双击 `CoRig.exe`；保留旁边的 DLL、plugins 和 qml 目录。
 

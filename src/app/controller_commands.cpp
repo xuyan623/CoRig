@@ -75,7 +75,7 @@ QVariantMap Controller::schema() const
     };
     QVariantMap commands;
     for (auto i = fields.cbegin(); i != fields.cend(); ++i) commands.insert(i.key(),QVariantMap{{"arguments",i.value()}});
-    return {{"application","CoRig"},{"api_version",3},{"version","0.4.2"},{"commands",commands},{"async","A job is complete only after its operation succeeds; poll job.get"},
+    return {{"application","CoRig"},{"api_version",3},{"version","0.4.3"},{"commands",commands},{"async","A job is complete only after its operation succeeds; poll job.get"},
         {"values",QVariantMap{{"bytes","{type:bytes,base64:...,length:N}"},{"samples","{time:seconds,values:{name:number}}"}}}};
 }
 
@@ -132,7 +132,7 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
     if (op == "plugin.export.dialog") { emit pluginExportRequested(args.value("scope","project").toString(),args.value("plugin").toString()); return QVariantMap{{"opened",true}}; }
     if (op == "plugin.directory") { if (!QDesktopServices::openUrl(QUrl::fromLocalFile(pluginState().value("directory").toString()))) throw Error("无法打开插件文件夹"); return QVariantMap{{"opened",true}}; }
     if (op == "plugin.settings") { plugins_->rescan(); emit pluginSettingsRequested(); return QVariantMap{{"opened",true}}; }
-    if (op == "update.state") return QVariantMap{{"supported",!maintenanceTool().isEmpty()},{"version","0.4.2"}};
+    if (op == "update.state") return QVariantMap{{"supported",!maintenanceTool().isEmpty()},{"version","0.4.3"}};
     if (op == "update.check") return launchTask(op,[this] { return checkUpdates([this] { return closing_.load(); }); });
     if (op == "update.install") {
         if (dirty_) throw Error("请先保存当前工程，再开始更新");

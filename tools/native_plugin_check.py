@@ -120,7 +120,7 @@ def main():
     try:
         client = launch()
         state = client.call('app.state')
-        check(state['application'] == 'CoRig' and state['version'] == '0.4.1', 'AI connects to the actual CoRig 0.4 application')
+        check(state['application'] == 'CoRig' and state['version'] == '0.4.3', 'AI connects to the actual CoRig 0.4 application')
         required = {'plugin.state', 'plugin.import', 'plugin.enable', 'plugin.remove', 'plugin.export', 'update.check', 'update.install', 'app.restart'}
         check(required <= set(client.call('schema')['commands']), 'AI discovery exposes the new plugin and installation commands')
         official = client.call('registry')
