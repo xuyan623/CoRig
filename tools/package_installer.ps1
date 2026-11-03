@@ -1,7 +1,8 @@
 param(
     [string]$IfwBin = '',
     [string]$RepositoryUrl = 'https://xuyan623.github.io/CoRig/updates/windows-x64/',
-    [string]$QtRuntimeVersion = '6.12.0'
+    [string]$QtRuntimeVersion = '6.12.0',
+    [string]$ApplicationPackageVersion = ''
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -12,6 +13,9 @@ foreach ($tool in @('binarycreator.exe','repogen.exe')) {
 $versionMatch = [regex]::Match((Get-Content -LiteralPath (Join-Path $repoRoot 'CMakeLists.txt') -Raw),'project\(CoRig VERSION ([0-9.]+)')
 if (!$versionMatch.Success) { throw '找不到 CoRig 项目版本' }
 $version = $versionMatch.Groups[1].Value
+# A corrected release can advance the application component independently, so
+# existing installs receive the new payload while the product keeps its version.
+if (!$ApplicationPackageVersion) { $ApplicationPackageVersion = $version }
 $release = Join-Path $repoRoot 'build\native-release\CoRig'
 foreach ($name in @('CoRig.exe','CoRig-cli.exe','CoRigSdk.dll','plugins')) {
     if (!(Test-Path -LiteralPath (Join-Path $release $name))) { throw "请先生成部署目录：缺少 $name" }
@@ -30,7 +34,7 @@ New-Item -ItemType Directory -Path $packages,$config -Force | Out-Null
 # versioned installer contents, so unchanged Qt files are reused during updates.
 $parts = @(
     @{Id='org.corig.runtime';Name='Qt 运行依赖';Version=$QtRuntimeVersion;Description='运行 CoRig 所需的 Qt 与 C++ 运行依赖';Default='true';Dependencies=''},
-    @{Id='org.corig.application';Name='联调 CoRig';Version=$version;Description='功能设计、界面设计与调试工作台';Default='true';Dependencies="org.corig.runtime-$QtRuntimeVersion"},
+    @{Id='org.corig.application';Name='联调 CoRig';Version=$ApplicationPackageVersion;Description='功能设计、界面设计与调试工作台';Default='true';Dependencies="org.corig.runtime-$QtRuntimeVersion"},
     @{Id='org.corig.official';Name='官方插件';Version=$version;Description='通信、协议、数据处理、数学、仪表与录制回放插件';Default='true';Dependencies='org.corig.application'},
     @{Id='org.corig.sdk';Name='C++ 插件开发 SDK';Version=$version;Description='公开头文件、构建工具与可运行的插件示例';Default='false';Dependencies='org.corig.application'}
 )
