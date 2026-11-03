@@ -31,7 +31,7 @@ CLI 不依赖 Python；默认记录失效或缺失时会探测仍可认证的进
 
 ## 数据、运行与界面
 
-bytes 使用 `{type:'bytes',base64:'...',length:N}`；采样帧为 `{time:秒,values:{通道名:数值}}`。端口、属性、动作由 registry 声明，先读取真实 ID 和默认配置。
+bytes 使用 `{type:'bytes',base64:'...',length:N}`；采样帧为 `{time:秒,values:{通道名:数值}}`。端口、属性、动作由 registry 声明，先读取真实 ID 和默认配置。`io.ports` 返回 `{ports:[{port,description,manufacturer,serial_number,system_location,loopback}]}`；`loopback=true` 表示无需硬件的软件回环，其 `port` 仍是可直接连接的端口，其余字段与旧消费方兼容。
 
 功能设计是实际执行来源。`editor.add` 接收 page=graph 或 layout，新增对象先待放置；`editor.place` 单击落位，`editor.withdraw` 撤下并保留配置。未放置的功能节点不参与计算。`graph.node.add` 是显式建图接口，默认直接放置，也可指定 placed=false。结构修改前暂停；未保存修改不能直接丢弃。project.save 未指定路径时默认写入 `<data-dir>/project/<工程名>.crpj`。
 
@@ -41,7 +41,7 @@ bytes 使用 `{type:'bytes',base64:'...',length:N}`；采样帧为 `{time:秒,va
 
 界面根是 layout.canvas，root.properties 的 width、height 是设计尺寸，grid_size 是 1～128 px 的网格粒度。`ui.item.patch` 只接受外观／布局字段；x、y、width、height 会按网格对齐，容器内部排列遵守相同网格。运行界面整体等比缩放并留白。
 
-`ui.item.schema` 查询指定界面对象可用的外观／布局参数。`ui.view.bind` 使用 id、node、view 重新绑定已有视图，保留界面对象 ID、外观、位置和容器归属。`graph.connection.options` 使用 node、port 查询同 GUI 一致的兼容目标及拒绝原因。
+`ui.item.schema` 查询指定界面对象可用的外观／布局参数。`ui.view.bind` 使用 id、node、view 重新绑定已有视图，保留界面对象 ID、外观、位置和容器归属。未放入界面的节点视图没有界面对象 ID，外观通过公开命令 `ui.view.appearance(node,view)` 读取，带 changes 时校验并写入工程 `ui.view_properties`（键为 `node/view`，每个组合一个槽位），只保存外观字段，不含位置与父子关系；视图 bridge.commit 只是转发该命令。`graph.connection.options` 使用 node、port 查询同 GUI 一致的兼容目标及拒绝原因。
 
 `editor.state` 查询 graph 或 layout 的实时 zoom、pan_x、pan_y、left_width、right_width 与视口尺寸；`editor.configure` 修改这些字段，fit=true 适应画布。zoom 范围为 0.1～3，侧栏宽度为 0～420，0 表示完全收起；仅 graph 支持 animation。它们改变显示状态，不修改工程，也可在只读和运行状态使用。侧栏实际宽度在下一次 Qt 布局后稳定，再查询 state 可确认结果。
 
@@ -119,9 +119,9 @@ position 为秒，direction 为 -1/1，倍速为 0.125～16。截断打开时，
 
 `project.options` 查询或修改 include_plugins；修改会标记未保存。project.save 沿用设置，project.export 可单独指定并保持当前工程路径不变。携带时写入用到的全部官方/用户包和资源；不携带时保留 plugin_dependencies，包括 id、version、sha256 和 relative_path。目录关系仅存在工程中，插件包内不保存分类。
 
-project.open 在更换工程前返回 requires_plugins/missing_plugins、requires_plugin_selection/conflicts 或 requires_restart/plugins。版本冲突需要明确传入 plugin_selections={包ID:project/local} 再打开；每次重新打开存在冲突的工程重新选择。打开不自动运行。
+project.open 在更换工程前返回 requires_plugins/missing_plugins、requires_plugin_selection/conflicts 或 requires_restart/plugins。版本冲突需要明确传入 plugin_selections={包ID:project/local} 再打开；每次重新打开存在冲突的工程重新选择。打开不自动运行。用命令行打开工程失败时，错误同时写入 native.log 并显示为界面通知，不会静默退出；原生崩溃写入程序目录 cache/logs/CoRig-crash-时间.log 与 .dmp。
 
-plugin.export 的单包参数为 plugin/path；批量参数为 plugins（包ID列表）、directory、scope。批量导出保留目录，存在目标时返回 requires_confirmation/conflicts，未写入任何包；确认后传 overwrite=true。scope=project 导出工程当前选定版本，scope=library 导出本地版本。plugin.export.dialog 打开相同树状勾选界面。正在使用的节点不能停用，包不能移除；失败返回引用。
+plugin.export 的单包参数为 plugin/path；批量参数为 plugins（包ID列表）、directory、scope。批量导出保留目录，存在目标时返回 requires_confirmation/conflicts，未写入任何包；确认后传 overwrite=true。scope=project 导出工程当前选定版本，scope=library 导出本地版本。传入 project（工程文件路径）时直接读取工程携带的插件包写到 directory，不要求先打开工程：省略 plugins 表示导出全部，同样以 overwrite 确认覆盖；工程在本机无法启动时也能取出内嵌包，再用 plugin.import 安装。plugin.export.dialog 打开相同树状勾选界面。正在使用的节点不能停用，包不能移除；失败返回引用。
 
 update.state 查询安装维护支持；update.check 返回 job，完成后 available/updates 来自真实维护工具。update.install 在工程已保存后启动安装维护并退出应用，完成安装由维护工具负责。app.restart 保留数据目录、工程路径与指定的插件版本选择。正式更新源需部署后才能在线使用；生成本地仓库不代表已经发布。
 
@@ -129,7 +129,7 @@ update.state 查询安装维护支持；update.check 返回 job，完成后 avai
 
 `property.get(scope,target)` 返回绑定、schema、values、draft、text_draft、dirty、pending、error 和 editor。scope 为 node、ui 或 workspace；target 是节点 ID、界面对象 ID 或工作区插件 ID。editor 是插件提供的自定义 QML 面板 URL；为空时使用默认表单。`property.stage` 写入完整字段值，`property.text` 保留尚未解析的数值或 JSON 原文，提交时才解析；无效文本会保留草稿和失败原因。`property.commit` 支持 confirmed 与 revision：返回 requires_confirmation 和 affected_wires 时表示端口变化会断开连线，原草稿保持；带同一 revision、confirmed=true 再提交，属性变化与断线作为一步撤销。`property.discard` 放弃草稿，`property.drafts` 列出所有未应用草稿。
 
-节点配置的 `node.configure.plan(node,changes)` 预演端口与连线影响，不修改工程。GUI 在切换选择、切换工作区、关闭工程或退出前检查草稿，提示应用、放弃或取消；异步提交完成前保持 pending。插件可用 property_commit=batch 决定一次提交，宿主记录一步撤销。
+节点配置的 `node.configure.plan(node,changes)` 预演端口与连线影响，不修改工程。未放置节点视图的外观编辑统一走 `ui.view.appearance`，与 bridge.commit 同一校验和撤销路径。GUI 在切换选择、切换工作区、关闭工程或退出前检查草稿，提示应用、放弃或取消；异步提交、节点动作与视图配置完成前保持 pending。插件可用 property_commit=batch 决定一次提交，宿主记录一步撤销。
 
 插件包 `implementation` 支持 native、python 和 qml。声明 `kind=node` 为计算节点；`kind=container` 使用 layout_script 和可选 qml；`kind=workspace` 使用 qml。纯 QML 包用于容器和工作区，不生成占位计算节点。容器 `container.layout(plugin,properties,children,width,height,grid)` 查询同一布局结果；`workspace.list` 列出当前工作区配置，`workspace.configure` 提交配置，`workspace.remove` 移除配置。工作区配置保存在 `project.workspaces`，完整插件随工程携带。
 
@@ -202,7 +202,7 @@ Python 插件按包使用独立工作进程；同包节点各自持有 namespace
 | `node.state` | node, detailed |
 | `plugin.directory` |  |
 | `plugin.enable` | plugin, plugins, enabled |
-| `plugin.export` | plugin, path, plugins, directory, overwrite, scope |
+| `plugin.export` | plugin, path, project, plugins, directory, overwrite, scope |
 | `plugin.export.dialog` | scope, plugin |
 | `plugin.import` | path, manifest |
 | `plugin.remove` | plugin, package |
@@ -246,6 +246,7 @@ Python 插件按包使用独立工作进程；同包节点各自持有 namespace
 | `ui.item.schema` | id |
 | `ui.update` |  |
 | `ui.view.add` | id, parent, node, view, properties |
+| `ui.view.appearance` | node, view, changes |
 | `ui.view.bind` | id, node, view |
 | `update.check` |  |
 | `update.install` |  |

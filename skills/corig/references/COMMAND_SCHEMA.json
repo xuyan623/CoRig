@@ -394,6 +394,7 @@
       "arguments": [
         "plugin",
         "path",
+        "project",
         "plugins",
         "directory",
         "overwrite",
@@ -623,6 +624,13 @@
         "node",
         "view",
         "properties"
+      ]
+    },
+    "ui.view.appearance": {
+      "arguments": [
+        "node",
+        "view",
+        "changes"
       ]
     },
     "ui.view.bind": {
