@@ -3657,7 +3657,15 @@
       }
     },
     "breaks_cycle": false,
-    "view_properties": {},
+    "view_properties": {
+      "panel_width": {
+        "type": "number",
+        "default": 148,
+        "min": 100,
+        "max": 1200,
+        "label": "数据栏宽度"
+      }
+    },
     "dynamic_ports": true,
     "batch_boundary": false,
     "category_path": [],

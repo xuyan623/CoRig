@@ -134,7 +134,7 @@ Item {
             Rectangle{width:8;height:8;radius:4;color:root.connectionState.connected?Theme.green:Theme.muted}
             Label{Layout.fillWidth:true;text:root.connectionState.connected?"已连接":"未连接";color:Theme.text}
             Label{text:"收 "+(root.connectionState.rx_bytes||0)+"　发 "+(root.connectionState.tx_bytes||0);color:Theme.muted;font.pixelSize:11}
-            IconButton{symbol:"sliders";text:"配置";onClicked:{App.workspaces.open("graph");App.invoke("graph.select",{id:root.host.nodeId})}}
+            IconButton{symbol:"sliders";text:"配置";visible:App.appMode!=="publish";onClicked:{App.workspaces.open("graph");App.invoke("graph.select",{id:root.host.nodeId})}}
         }
         RowLayout{
             Layout.fillWidth:true

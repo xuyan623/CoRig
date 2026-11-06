@@ -62,7 +62,9 @@ Item {
                     Label{Layout.fillWidth:true;Layout.rightMargin:12;text:entry.message;elide:Text.ElideRight;color:Theme.text}
                 }
                 TextArea{id:detail;x:20;y:header.height;width:parent.width-40;visible:entry.expanded;text:entry.details;readOnly:true;selectByMouse:true;wrapMode:Text.WrapAnywhere;font.family:"Consolas";font.pixelSize:11;background:null}
-                MouseArea{height:header.height;width:parent.width;onClicked:entry.expanded=!entry.expanded;onDoubleClicked:if(entry.node){App.workspaces.open("graph");App.invoke("graph.select",{id:entry.node});App.graphFocusRequested(entry.node)}}
+                // Jumping to a node is an editor gesture; a published window has no
+                // design graph to show.
+                MouseArea{height:header.height;width:parent.width;onClicked:entry.expanded=!entry.expanded;onDoubleClicked:if(entry.node&&App.appMode!=="publish"){App.workspaces.open("graph");App.invoke("graph.select",{id:entry.node});App.graphFocusRequested(entry.node)}}
             }
             Label{anchors.centerIn:parent;visible:!records.count;text:"暂无匹配日志";color:Theme.muted}
             ScrollBar.vertical:ScrollBar{}

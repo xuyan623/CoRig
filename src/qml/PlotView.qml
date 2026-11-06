@@ -5,11 +5,30 @@ import QtQuick.Dialogs
 import CoRig.Native 1.0
 
 Item {
-    id:root;required property var host
+    id:root;required property var host;objectName:"plot.view"
     property bool follow:true
     property bool fft:false
     property var range:({})
     property string exportKind:"png"
+    // The data panel width is part of the view appearance, so a placed view
+    // reopens with the split the user chose. It is written once when a drag
+    // ends rather than while the handle moves.
+    property real panelWidth:148
+    property bool panelDragging:false
+    readonly property bool panelLocked:!!(root.host.designMode||App.readOnly)
+    readonly property real maxPanelWidth:Math.max(100,Math.min(1200,width*0.6))
+    readonly property real persistedPanelWidth:root.clampPanelWidth(root.host.viewProperties&&root.host.viewProperties.panel_width!==undefined?root.host.viewProperties.panel_width:148)
+    function clampPanelWidth(value){const n=Number(value);if(!isFinite(n)||n<=0)return 148;return Math.max(100,Math.min(root.maxPanelWidth,Math.round(n)))}
+    function syncPanelWidth(){if(!root.panelDragging)root.panelWidth=root.persistedPanelWidth}
+    function applyPanelWidth(value){
+        if(root.panelLocked||!root.host.uiItem)return
+        const next=root.clampPanelWidth(value)
+        root.panelWidth=next
+        if(next===root.persistedPanelWidth)return
+        const reply=App.invoke("ui.item.patch",{id:root.host.uiItem,properties:{panel_width:next}})||{}
+        if(reply.ok===false||reply.error)root.panelWidth=root.persistedPanelWidth
+    }
+    function finishPanelDrag(){root.panelDragging=false;root.applyPanelWidth(panel.width)}
     // The channel list must survive the view poll, which replaces the whole
     // observation every refresh. Rows are keyed by channel name and show the
     // node's own channel state: the view keeps a click while its patch is in
@@ -105,11 +124,15 @@ Item {
         return({ok:false,error:"未知曲线视图操作"})
     }
     ListModel{id:channels}
-    Component.onCompleted:{observe();sync()}
+    onPanelWidthChanged:panel.SplitView.preferredWidth=root.panelWidth
+    // A narrower window clamps the panel, and the stored width returns once
+    // there is room again.
+    onWidthChanged:root.syncPanelWidth()
+    Component.onCompleted:{observe();sync();root.syncPanelWidth()}
     onFollowChanged:observe()
     onFftChanged:observe()
     onRangeChanged:observe()
-    Connections{target:root.host;function onObservationChanged(){root.sync()}function onConfigChanged(){root.sync()}}
+    Connections{target:root.host;function onObservationChanged(){root.sync()}function onConfigChanged(){root.sync()}function onViewPropertiesChanged(){root.syncPanelWidth()}}
     Connections{target:App;function onJobFinished(id){root.settle(id)}}
     ColumnLayout{
         anchors.fill:parent;spacing:0
@@ -122,10 +145,15 @@ Item {
             Item{Layout.fillWidth:true}
             IconButton{symbol:"export";text:"导出";onClicked:exportMenu.popup()}
         }
-        RowLayout{
+        SplitView{
+            id:split
             Layout.fillWidth:true;Layout.fillHeight:true;spacing:0
+            // Only an editable project persists a new split. Locking the two
+            // bounds instead of disabling the view keeps the channel list
+            // scrollable in read-only projects.
+            onResizingChanged:{if(resizing)root.panelDragging=true;else if(root.panelDragging)root.finishPanelDrag()}
             Item {
-                Layout.fillWidth:true;Layout.fillHeight:true
+                SplitView.fillWidth:true;SplitView.minimumWidth:120
                 NativePlot{id:plot;anchors.fill:parent;observation:root.host.observation;onWidthChanged:root.observe()}
                 Repeater{model:6;Label{required property int index;x:2;y:16+(plot.height-56)*index/5-7;width:48;horizontalAlignment:Text.AlignRight;color:Theme.muted;font.pixelSize:10;font.family:"Consolas";text:(Number(root.host.observation.y_max||1)-(Number(root.host.observation.y_max||1)-Number(root.host.observation.y_min||-1))*index/5).toPrecision(3)}}
                 Repeater{model:6;Label{required property int index;x:54+(plot.width-72)*index/5-25;y:plot.height-33;width:50;horizontalAlignment:Text.AlignHCenter;color:Theme.muted;font.pixelSize:10;font.family:"Consolas";text:(Number(root.host.observation.x_min||0)+(Number(root.host.observation.x_max||1)-Number(root.host.observation.x_min||0))*index/5).toPrecision(3)}}
@@ -146,25 +174,42 @@ Item {
                 Label{visible:pointer.containsMouse;x:Math.min(plot.width-width-8,Math.max(54,pointer.mouseX+8));y:20;color:Theme.text;font.pixelSize:10;font.family:"Consolas";text:{const d=root.host.observation;return"x "+(Number(d.x_min||0)+(pointer.mouseX-54)/Math.max(1,plot.width-72)*(Number(d.x_max||1)-Number(d.x_min||0))).toPrecision(5)+"\ny "+(Number(d.y_max||1)-(pointer.mouseY-16)/Math.max(1,plot.height-56)*(Number(d.y_max||1)-Number(d.y_min||-1))).toPrecision(5)}}
             }
             ScrollView{
-                Layout.preferredWidth:148;Layout.fillHeight:true;clip:true
+                id:panel
+                SplitView.preferredWidth:148
+                SplitView.minimumWidth:root.panelLocked?root.panelWidth:100
+                SplitView.maximumWidth:root.panelLocked?root.panelWidth:root.maxPanelWidth
+                clip:true
                 Column{
-                    width:142
+                    width:Math.max(0,panel.width-10)
                     Repeater{
                         model:channels
                         Row{
                             required property string channel
                             required property bool ticked
                             required property string tint
-                            width:142;height:32;spacing:4
+                            // A wrapped name grows the row instead of being cut
+                            // off, and every row keeps the old minimum height.
+                            width:parent.width;height:Math.max(32,nameLabel.implicitHeight+8);spacing:4
                             CheckBox{
-                                id:toggle;width:28;height:30
+                                id:toggle;width:28;height:Math.min(parent.height,30)
+                                anchors.verticalCenter:parent.verticalCenter
                                 // The click owns the button until the patch settles;
                                 // Binding re-applies a rollback without breaking it.
                                 Binding{target:toggle;property:"checked";value:ticked}
                                 onClicked:root.setVisible(channel,toggle.checked)
                             }
                             Rectangle{width:9;height:9;radius:2;color:tint;anchors.verticalCenter:parent.verticalCenter;TapHandler{onTapped:{colorPicker.channel=channel;colorPicker.selectedColor=tint;colorPicker.open()}}}
-                            Label{width:98;text:channel;color:Theme.text;elide:Text.ElideRight;anchors.verticalCenter:parent.verticalCenter;ToolTip.visible:hover.hovered;ToolTip.text:channel;HoverHandler{id:hover}}
+                            Label{
+                                id:nameLabel
+                                width:Math.max(40,parent.width-45);text:channel;color:Theme.text
+                                // A wrapped name must never be cut, so the mode is
+                                // stated explicitly instead of relying on the default.
+                                elide:Text.ElideNone
+                                wrapMode:Text.WrapAtWordBoundaryOrAnywhere
+                                anchors.verticalCenter:parent.verticalCenter
+                                ToolTip.visible:hover.hovered;ToolTip.text:channel;HoverHandler{id:hover}
+                                objectName:"plot.channel.name"
+                            }
                         }
                     }
                 }

@@ -5,8 +5,16 @@ import QtQuick.Layouts
 Item {
     id:root;required property var host
     property string kind:host.design.plugin||""
+    // A published application is read-only: a committed control value becomes a user
+    // parameter that is replayed on the next start, with the same semantics as an AI
+    // params.set call. The editor keeps driving the live session directly.
+    property bool publishMode:App.appMode==="publish"
+    property string param:"value"
     property var value:(host.snapshot.state||{}).value===undefined?host.config.value:(host.snapshot.state||{}).value
-    function setValue(value){host.action("set_value",{value:value})}
+    function setValue(value){
+        if(root.publishMode){App.invoke("params.set",{node:root.host.nodeId,param:root.param,value:value});return}
+        host.action("set_value",{value:value})
+    }
     ColumnLayout{
         anchors.fill:parent;spacing:6
         Loader{
