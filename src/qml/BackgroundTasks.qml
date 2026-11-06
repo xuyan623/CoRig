@@ -2,13 +2,13 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Dialog {
-    id:root;objectName:"tasks.background";title:"后台任务";modal:true;anchors.centerIn:parent
-    width:650;height:Math.min(580,parent.height-48)
+Item {
+    id:root;objectName:"tasks.background"
+    property bool active:false
     property var jobs:[]
     function refresh(){jobs=App.invoke("job.list",{}).filter(job=>!!job.python_task)}
-    onOpened:refresh()
-    Timer{interval:250;running:root.opened;repeat:true;onTriggered:root.refresh()}
+    onActiveChanged:if(active)refresh()
+    Timer{interval:250;running:root.active;repeat:true;onTriggered:root.refresh()}
     ColumnLayout {
         anchors.fill:parent;spacing:12
         Label{visible:!root.jobs.length;text:"当前没有后台任务。";color:Theme.muted}
@@ -33,5 +33,4 @@ Dialog {
             }
         }
     }
-    standardButtons:Dialog.Close
 }

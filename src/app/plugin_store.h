@@ -10,7 +10,9 @@
 namespace corig {
 class PluginStore {
 public:
-    PluginStore(QString directory, QSettings &settings, Catalog::PythonCall python = {});
+    // A published application reads its packages from the payload and must
+    // never copy, seed or remove anything; readOnly keeps every write path shut.
+    PluginStore(QString directory, QSettings &settings, Catalog::PythonCall python = {}, bool readOnly = false);
     Catalog catalog(const QVariantMap &project, bool includeDisabled = false) const;
     QVariantMap readiness(const QVariantMap &project) const;
     QVariantMap state(const QVariantMap &project) const;
@@ -28,6 +30,7 @@ private:
     void recheckLoaded();
     QString directory_;
     QSettings &settings_;
+    bool readOnly_ = false;
     Catalog::PythonCall python_;
     mutable QReadWriteLock lock_;
     QMap<QString,PluginPackage> installed_;

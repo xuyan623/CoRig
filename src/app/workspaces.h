@@ -30,7 +30,7 @@ public:
     QList<QQuickItem *> pageItems() const;
     QQuickItem *page(const QString &key) const;
     QQuickWindow *window(const QString &id) const;
-    Q_INVOKABLE QVariantMap open(const QString &key, const QString &preferredWindow = {});
+    Q_INVOKABLE QVariantMap open(const QString &key, const QString &preferredWindow = {}, bool activate = true);
     Q_INVOKABLE QVariantMap closePage(const QString &key, bool discard = false);
     Q_INVOKABLE bool closeWindow(const QString &id, bool discard = false);
     Q_INVOKABLE QVariantMap movePage(const QString &key, const QString &window, int index = -1);
@@ -47,7 +47,7 @@ private:
     // signal. It never schedules work or changes engine/display priorities.
     struct Frames { std::mutex mutex; std::array<double,512> intervals{}; quint64 count = 0; std::chrono::steady_clock::time_point last{}; };
     struct Host { QString id, active; QStringList tabs; QPointer<QQuickWindow> window; bool child = false, pinned = false; std::shared_ptr<Frames> frames; };
-    QString createWindow(const QPoint &position = {}, bool child = false);
+    QString createWindow(const QPoint &position = {}, bool child = false, bool present = true);
     void promoteMain();
     QQuickItem *ensurePage(const QString &key);
     void synchronize();

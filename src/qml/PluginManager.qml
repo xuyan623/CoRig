@@ -2,12 +2,14 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// This dialog manages the local folder scan only. Embedded project packages
+// This page manages the local folder scan only. Embedded project packages
 // remain in the project dependency and export flows, including other versions.
-Dialog {
+Item {
     id:root
-    title:"本地插件管理";objectName:"plugins.manager";modal:true;anchors.centerIn:parent
-    width:Math.min(1060,parent.width-48);height:Math.min(800,parent.height-48)
+    objectName:"plugins.manager"
+    property bool active:false
+    function activate(){managerQuery.text="";selectedPackage="";enableError="";tree.expandAll(false)}
+    onActiveChanged:if(active)activate()
     property string selectedPackage:""
     property string enableJob:""
     property string enableError:""
@@ -22,7 +24,6 @@ Dialog {
         })
         return result
     }
-    onOpened:{managerQuery.text="";selectedPackage="";enableError="";tree.expandAll(false)}
     ColumnLayout {
         anchors.fill:parent;spacing:10
         RowLayout {
@@ -143,6 +144,5 @@ Dialog {
             }
         }
     }
-    footer:DialogButtonBox{ActionButton{objectName:"plugins.close";text:"关闭";onClicked:root.close()}}
     Connections{target:App;function onJobFinished(id){if(id===root.enableJob){root.enableError=App.job(id).error||"";root.enableJob=""}}}
 }

@@ -30,18 +30,18 @@ QList<PluginPackage> projectPackages(const QVariantMap &project)
 }
 }
 
-PluginStore::PluginStore(QString directory, QSettings &settings, Catalog::PythonCall python) : directory_(std::move(directory)), settings_(settings), python_(std::move(python))
+PluginStore::PluginStore(QString directory, QSettings &settings, Catalog::PythonCall python, bool readOnly) : directory_(std::move(directory)), settings_(settings), python_(std::move(python)), readOnly_(readOnly)
 {
-    if (!QDir().mkpath(directory_)) throw Error("无法创建插件库目录");
+    if (!readOnly_ && !QDir().mkpath(directory_)) throw Error("无法创建插件库目录");
     // The library directory is the whole inventory. Identity comes from the
     // declared package ID, so a package keeps working wherever the user filed
     // it and a rebuild never creates a second copy of one ID.
     const auto scanned = packagesInDirectory(directory_);
     for (auto i = scanned.cbegin(); i != scanned.cend(); ++i) addScanned(i.key(),i.value());
-    seedBundled();
+    if (!readOnly_) seedBundled();
     disabled_ = QSet<QString>(settings_.value("plugins/disabled").toStringList().begin(),settings_.value("plugins/disabled").toStringList().end());
     recheckLoaded();
-    settings_.setValue("plugins/initialized",true);
+    if (!readOnly_) settings_.setValue("plugins/initialized",true);
 }
 
 void PluginStore::seedBundled()
@@ -186,6 +186,7 @@ QVariantMap PluginStore::state(const QVariantMap &project) const
 
 QVariantMap PluginStore::install(const PluginPackage &package, const QString &fileName)
 {
+    if (readOnly_) throw Error("发布运行模式不支持修改插件库");
     QWriteLocker lock(&lock_);
     auto candidates = installed_; candidates.remove(package.id());
     Catalog trial(candidates.values(),python_); trial.addPackage(package);
@@ -210,6 +211,7 @@ QVariantMap PluginStore::install(const PluginPackage &package, const QString &fi
 
 void PluginStore::setEnabled(const QStringList &plugins, bool enabled, const QVariantMap &project)
 {
+    if (readOnly_) throw Error("发布运行模式不支持修改插件库");
     QWriteLocker lock(&lock_);
     if (plugins.isEmpty()) throw Error("请选择需要启用或停用的插件");
     QSet<QString> available;
@@ -236,6 +238,7 @@ void PluginStore::setEnabled(const QStringList &plugins, bool enabled, const QVa
 
 void PluginStore::remove(const QString &id, const QVariantMap &project)
 {
+    if (readOnly_) throw Error("发布运行模式不支持修改插件库");
     QWriteLocker lock(&lock_);
     if (!installed_.contains(id)) throw Error("本机插件包不存在：" + id);
     const auto used = usedPlugins(project);

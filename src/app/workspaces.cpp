@@ -29,7 +29,7 @@ Workspaces::~Workspaces()
     for (const auto &host : hosts_) if (host.window) delete host.window;
 }
 
-QString Workspaces::createWindow(const QPoint &position, bool child)
+QString Workspaces::createWindow(const QPoint &position, bool child, bool present)
 {
     const auto id = newId("window");
     QQmlComponent component(engine_,QUrl("qrc:/qt/qml/CoRig/WorkspaceWindow.qml"));
@@ -54,7 +54,8 @@ QString Workspaces::createWindow(const QPoint &position, bool child)
         const auto screen = QGuiApplication::screenAt(position); const auto area = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
         window->setPosition(std::clamp(position.x(),area.left(),std::max(area.left(),area.right() - window->width())),std::clamp(position.y(),area.top(),std::max(area.top(),area.bottom() - window->height())));
     }
-    window->show(); return id;
+    if (present) window->show();
+    return id;
 }
 
 QQuickItem *Workspaces::ensurePage(const QString &key)
@@ -132,7 +133,7 @@ void Workspaces::synchronize()
     emit changed();
 }
 
-QVariantMap Workspaces::open(const QString &key, const QString &preferredWindow)
+QVariantMap Workspaces::open(const QString &key, const QString &preferredWindow, bool activate)
 {
     const QVariantMap arguments{{"page",key},{"window",preferredWindow}};
     const auto guard = controller_.draftGuard("workspace.open",arguments);
@@ -144,19 +145,21 @@ QVariantMap Workspaces::open(const QString &key, const QString &preferredWindow)
     // The library is a unique project-owned browser, opened in a compact child
     // from every entry point. Reopening focuses that same browser instance.
     if (key == "library" && (owner.isEmpty() || !hosts_[owner].child)) {
-        const auto child = createWindow({},true);
+        const auto child = createWindow({},true,activate);
         if (owner.isEmpty()) { hosts_[child].tabs.append(key); owner = child; }
         else { movePage(key,child); owner = child; }
     }
     if (owner.isEmpty()) {
         owner = hosts_.contains(preferredWindow) ? preferredWindow : QString{};
         if (owner.isEmpty()) for (const auto &host : hosts_) if (!host.child) { owner = host.id; break; }
-        if (owner.isEmpty()) owner = hosts_.isEmpty() ? createWindow() : hosts_.firstKey();
+        if (owner.isEmpty()) owner = hosts_.isEmpty() ? createWindow({},false,activate) : hosts_.firstKey();
         hosts_[owner].tabs.append(key);
     }
     hosts_[owner].active = key; synchronize();
-    hosts_[owner].window->show(); hosts_[owner].window->raise(); hosts_[owner].window->requestActivate();
-    return {{"page",key},{"window",owner}};
+    if (activate) {
+        hosts_[owner].window->show(); hosts_[owner].window->raise(); hosts_[owner].window->requestActivate();
+    }
+    return {{"page",key},{"window",owner},{"activated",activate}};
 }
 
 void Workspaces::removeEmpty(const QString &host)
