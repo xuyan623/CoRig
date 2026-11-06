@@ -217,8 +217,12 @@ QVariant Controller::controls(const QString &op, const QVariantMap &args)
     const auto entry = *found; QPointer<QObject> object = entry.object;
     const auto description = describeControl(entry,id);
     if (op == "controls.get") return description;
-    if (!object->property("visible").toBool() || !object->property("enabled").toBool()) throw Error("控件当前不可操作：" + id);
     auto item = qobject_cast<QQuickItem *>(object.data());
+    // QQuickAction has no visual item; its enabled state still gates the
+    // trigger, while menu items and normal controls must also be visible.
+    if (item ? (!object->property("visible").toBool() || !object->property("enabled").toBool())
+             : (object->property("enabled").isValid() && !object->property("enabled").toBool()))
+        throw Error("控件当前不可操作：" + id);
     const auto previousJobs = QSet<QString>(jobs_.keyBegin(),jobs_.keyEnd());
     if (op == "controls.set") {
         const auto name = args.value("property","text").toString();
@@ -248,6 +252,8 @@ QVariant Controller::controls(const QString &op, const QVariantMap &args)
         }
     } else if (op == "controls.click") {
         if (object->metaObject()->indexOfMethod("click()") >= 0) QMetaObject::invokeMethod(object,"click");
+        else if (object->metaObject()->indexOfMethod("trigger(QObject*)") >= 0)
+            QMetaObject::invokeMethod(object,"trigger",Q_ARG(QObject*,static_cast<QObject*>(nullptr)));
         else clickItem(item);
     } else if (op == "controls.focus") {
         if (!item) throw Error("对象不能接收键盘焦点");
@@ -295,7 +301,7 @@ QVariant Controller::editorView(const QString &op, const QVariantMap &args)
     const auto page = args.value("page").toString();
     if (page != "graph" && page != "layout") throw Error("编辑页面需要 graph 或 layout");
     if (!workspaces_) throw Error("工作区尚未建立");
-    if (!workspaces_->page(page)) workspaces_->open(page);
+    if (!workspaces_->page(page)) workspaces_->open(page,{},false);
     const auto item = workspaces_->page(page);
     auto options = args; options.remove("page");
     for (const auto name : {"zoom","pan_x","pan_y","left_width","right_width"}) if (options.contains(name)) {
