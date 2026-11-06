@@ -7,6 +7,8 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QJSValue>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QMimeData>
 #include <QJsonDocument>
 #include <QFile>
@@ -42,6 +44,11 @@ private slots:
     void sixDofAppearanceKeepsCamera();
     void placedViewBridgeUsesPropertySession();
     void viewBridgePreviewStaysReadOnly();
+    void plotChannelNamesWrapAndPanelWidthPersists();
+    void projectSwitchWhileRunningAsksToStop();
+    void projectSwitchDialogStopsRunThenOpens();
+    void projectOpenFailureShowsDialog();
+    void publishModeHidesEditorSurfaces();
 private:
     QVariant run(const QString &op, const QVariantMap &args = {});
     QQuickItem *findItem(const QString &name, QQuickItem *from = nullptr);
@@ -379,7 +386,7 @@ void WorkbenchUiTest::localPluginDetailsStayVisibleWhenDisabled()
     QTRY_VERIFY(!app_->definition("control.number").isEmpty());
     QTRY_VERIFY(!app_->definition("control.text").isEmpty());
     QCOMPARE(app_->project(),before);
-    run("controls.click",{{"id","plugins.close"}});
+    run("controls.click",{{"id","settings.close"}});
 }
 
 void WorkbenchUiTest::propertyDraftsAndPortsAreAtomic()
@@ -760,6 +767,149 @@ void WorkbenchUiTest::viewBridgePreviewStaysReadOnly()
     QVERIFY(!probe->property("actionError").toString().isEmpty());
     QVERIFY(!probe->property("commitError").toString().isEmpty());
     QVERIFY(!probe->property("configureError").toString().isEmpty());
+}
+
+// A long channel name must stay complete: the row wraps and grows instead of
+// cutting the name, and the split the user drags is stored as the view's own
+// appearance so reopening the project restores it.
+void WorkbenchUiTest::plotChannelNamesWrapAndPanelWidthPersists()
+{
+    const QString channelName = QStringLiteral("温度传感器通道一（进料口）");
+    run("graph.node.add",{{"id","feed"},{"plugin","control.number"},{"position",QVariantList{20.,420.}}});
+    run("graph.node.add",{{"id","curve"},{"plugin","plot.curves"},{"position",QVariantList{360.,420.}}});
+    run("node.configure",{{"node","curve"},{"changes",QVariantMap{{"inputs",QVariantList{"long"}},
+        {"input_labels",QVariantMap{{"long",channelName}}}}}});
+    run("graph.wire.add",{{"id","long_feed"},{"source",QVariantList{"feed","value"}},{"target",QVariantList{"curve","long"}}});
+    run("ui.view.add",{{"id","curve_view"},{"node","curve"},{"view","plot"}});
+    const auto placed = app_->uiItem("curve_view").value("properties").toMap();
+    QCOMPARE(placed.value("panel_width").toInt(),148);
+
+    QQmlComponent component(qml_.get(),QUrl(QStringLiteral("qrc:/qt/qml/CoRig/BuiltinView.qml")));
+    QVERIFY2(component.isReady(),qPrintable(component.errorString()));
+    std::unique_ptr<QObject> view(component.createWithInitialProperties({{"nodeId","curve"},{"viewKey","plot"},
+        {"uiItem","curve_view"},{"viewProperties",placed}}));
+    QVERIFY(view);
+    auto *item = qobject_cast<QQuickItem *>(view.get());QVERIFY(item);
+    item->setSize(QSizeF(800,360));item->setParentItem(window_->contentItem());
+    QTRY_VERIFY_WITH_TIMEOUT(findItem("plot.view",item) != nullptr,5000);
+    auto *plot = findItem("plot.view",item);
+    QCOMPARE(plot->property("panelWidth").toInt(),148);
+
+    run("runtime.start",{{"debug",false}});
+    QTRY_VERIFY_WITH_TIMEOUT(findItem("plot.channel.name",plot) != nullptr,10000);
+    auto *name = findItem("plot.channel.name",plot);
+    QCOMPARE(name->property("text").toString(),channelName);
+    // Text.ElideNone and Text.WrapAtWordBoundaryOrAnywhere: nothing is cut and
+    // the name takes as many lines as it needs.
+    // Qt 6.12 orders Text.ElideNone as 3 (ElideLeft is 0), so 3 is the
+    // "nothing is cut" mode. Text.WrapAtWordBoundaryOrAnywhere is 4.
+    QCOMPARE(name->property("elide").toInt(),3);
+    QCOMPARE(name->property("wrapMode").toInt(),4);
+    const auto nameHeight = name->property("implicitHeight").toDouble();
+    QVERIFY2(nameHeight > 18.,qPrintable(QString::number(nameHeight)));
+    QVERIFY(name->parentItem()->height() >= nameHeight + 7.);
+
+    QVERIFY(QMetaObject::invokeMethod(plot,"applyPanelWidth",Q_ARG(QVariant,QVariant(260.))));
+    QTRY_COMPARE(app_->uiItem("curve_view").value("properties").toMap().value("panel_width").toInt(),260);
+    QVERIFY(app_->dirty());
+    QTRY_COMPARE(plot->property("panelWidth").toInt(),260);
+    run("runtime.stop");
+    run("history.undo");
+    QCOMPARE(app_->uiItem("curve_view").value("properties").toMap().value("panel_width").toInt(),148);
+    // Stopping the run reloads the view, so the stored appearance is read from
+    // a freshly created item instead of the pointer captured earlier.
+    view->setProperty("viewProperties",app_->uiItem("curve_view").value("properties").toMap());
+    auto *restored = findItem("plot.view",item);
+    QVERIFY(restored);
+    QTRY_COMPARE(restored->property("panelWidth").toInt(),148);
+}
+
+// A running session keeps project.load behind the runtime guard; the command
+// reports it as a decision so the window can offer to stop the run instead of
+// leaving the user with a status-bar notice.
+void WorkbenchUiTest::projectSwitchWhileRunningAsksToStop()
+{
+    const auto saved = folder_->filePath("switch.crpj");
+    run("project.save",{{"path",saved},{"include_plugins",true}});
+    run("project.rename",{{"name","运行中工程"}});
+    run("runtime.start",{{"debug",false}});
+    QTRY_VERIFY_WITH_TIMEOUT(app_->runtime().value("running").toBool(),10000);
+    const auto reply = app_->invoke("project.open",{{"path",saved},{"discard",true}}).toMap();
+    QVERIFY2(reply.value("requires_runtime_stop").toBool(),qPrintable(reply.value("error").toString()));
+    QVERIFY(reply.value("job").toString().isEmpty());
+    QCOMPARE(app_->projectPath(),saved);
+    QCOMPARE(app_->project().value("name").toString(),QString("运行中工程"));
+    run("runtime.stop");
+    run("project.open",{{"path",saved},{"discard",true}});
+    QCOMPARE(app_->projectPath(),saved);
+    QVERIFY(app_->project().value("name").toString()!=QString("运行中工程"));
+}
+
+// The window owns the two-step switch: ask, stop, retry, and show failures.
+void WorkbenchUiTest::projectSwitchDialogStopsRunThenOpens()
+{
+    const auto saved = folder_->filePath("dialog-switch.crpj");
+    run("project.save",{{"path",saved},{"include_plugins",true}});
+    run("project.rename",{{"name","运行中工程"}});
+    run("runtime.start",{{"debug",false}});
+    QTRY_VERIFY_WITH_TIMEOUT(app_->runtime().value("running").toBool(),10000);
+    QVERIFY(QMetaObject::invokeMethod(window_,"openProjectAt",Q_ARG(QVariant,QVariant(saved))));
+    auto *dialog = window_->findChild<QObject *>("dialog.project.runtime");
+    QVERIFY(dialog);
+    QTRY_VERIFY(dialog->property("opened").toBool());
+    QVERIFY(dialog->property("projectName").toString().contains("运行中工程"));
+    QVERIFY(QMetaObject::invokeMethod(window_,"confirmRuntimeStop"));
+    QTRY_VERIFY_WITH_TIMEOUT(!app_->runtime().value("running").toBool(),10000);
+    QTRY_COMPARE_WITH_TIMEOUT(app_->projectPath(),saved,10000);
+    // The retry runs as a job, so the reload lands after the stop job finishes.
+    QTRY_VERIFY_WITH_TIMEOUT(app_->project().value("name").toString()!=QString("运行中工程"),10000);
+}
+
+// A rejected or failed open must not stay hidden in the status bar.
+void WorkbenchUiTest::projectOpenFailureShowsDialog()
+{
+    const auto before = app_->projectPath();
+    const auto missing = folder_->filePath("missing.crpj");
+    QVERIFY(QMetaObject::invokeMethod(window_,"openProjectAt",Q_ARG(QVariant,QVariant(missing))));
+    auto *dialog = window_->findChild<QObject *>("dialog.project.error");
+    QVERIFY(dialog);
+    QTRY_VERIFY_WITH_TIMEOUT(dialog->property("opened").toBool(),10000);
+    QVERIFY(!dialog->property("message").toString().isEmpty());
+    QCOMPARE(app_->projectPath(),before);
+}
+
+// A published window keeps only runtime surfaces: editor menus, tab actions and
+// plugin/Python settings disappear, while the AI access document can still be
+// copied. The window owns this presentation; command policy stays in the registry.
+void WorkbenchUiTest::publishModeHidesEditorSurfaces()
+{
+    QVERIFY(window_->setProperty("publishMode",true));
+    auto *bar = window_->property("menuBar").value<QObject*>();
+    QVERIFY(bar);
+    auto *row = bar->property("contentItem").value<QQuickItem*>();
+    QVERIFY(row);
+    const auto wrapper = [this,row](const QString &name) -> QQuickItem* {
+        auto *menu = window_->findChild<QObject*>(name);
+        if (!menu) return nullptr;
+        for (auto *item : row->childItems()) if (item->property("menu").value<QObject*>() == menu) return item;
+        return nullptr;
+    };
+    QVERIFY(wrapper("menu.file"));QVERIFY(wrapper("menu.edit"));
+    // Visibility is re-applied after the mode change, so wait for the event loop.
+    QTRY_VERIFY(wrapper("menu.publish") && wrapper("menu.publish")->isVisible());
+    QTRY_VERIFY(!wrapper("menu.file")->isVisible());
+    QTRY_VERIFY(!wrapper("menu.edit")->isVisible());
+    auto *add = findItem("workspace.add");QVERIFY(add);QVERIFY(!add->isVisible());
+    QTRY_VERIFY(!findItem("workspace.tab.graph"));
+    // The copy command returns the same document the API describes; the hidden
+    // text sink proves the window can put it on the clipboard without a new op.
+    QVERIFY(QMetaObject::invokeMethod(window_,"copyConnectionInfo"));
+    QTRY_VERIFY(QGuiApplication::clipboard()->text().contains("CoRig AI 接口接入信息"));
+    auto *notice = findItem("execution.notice");QVERIFY(notice);
+    QTRY_VERIFY(notice->property("text").toString().contains("已复制"));
+    QVERIFY(window_->setProperty("publishMode",false));
+    QTRY_VERIFY(wrapper("menu.file")->isVisible());
+    QVERIFY(!wrapper("menu.publish")->isVisible());
 }
 
 QTEST_MAIN(WorkbenchUiTest)

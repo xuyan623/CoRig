@@ -12,6 +12,16 @@ ApplicationWindow {
     property string activePage: ""
     property string pendingAction: ""
     property string savingJob: ""
+    property string pendingProjectOp: ""
+    property var pendingProjectArgs: ({})
+    property string runtimeStopJob: ""
+    property string projectJob: ""
+    // Presentation state only: a published application hides editor chrome here,
+    // while CommandRegistry stays the single command-level authority.
+    property bool publishMode: App.appMode === "publish"
+    readonly property var publishPages: ["runtime", "logs"]
+    property string localNotice: ""
+    property string localNoticeLevel: "info"
     objectName: "window." + hostId
     width:childWindow?1000:1420;height:childWindow?700:900;minimumWidth:childWindow?540:800;minimumHeight:childWindow?320:540
     visible: false
@@ -43,25 +53,143 @@ ApplicationWindow {
     function continueAction() {
         let action = pendingAction; pendingAction = ""
         if (action === "open") openProject.open()
-        else if (action === "new") App.invoke("project.new", {discard:true})
+        else if (action === "new") win.newProject()
         else if (action === "close") App.workspaces.closeWindow(hostId, true)
     }
+    // MenuBar always creates one button per bare Menu and ignores Menu.visible, so a
+    // published window hides the editor menus on the created bar items instead. The
+    // publish menu is hidden the same way while editing.
+    function applyMenuBarMode() {
+        const bar = win.menuBar
+        const row = bar ? bar.contentItem : null
+        if (!row) return
+        for (let i = 0; i < row.children.length; ++i) {
+            const item = row.children[i]
+            if (!item.menu) continue
+            if (item.menu === editorFileMenu || item.menu === editorEditMenu) item.visible = !win.publishMode
+            else if (item.menu === publishMenu) item.visible = win.publishMode
+        }
+    }
+    // Local feedback shares the status notice; no command produces these messages,
+    // so the window shows them itself and falls back to App.notice afterwards.
+    function notify(message, level) { win.localNotice = message; win.localNoticeLevel = level || "info"; localNoticeTimer.restart() }
+    // app.connection returns the copyable AI access document. Qt Quick has no
+    // clipboard API, so the window keeps one hidden text sink for that write.
+    function copyConnectionInfo() {
+        const reply = App.invoke("app.connection", {}) || {}
+        if (reply.error) { win.notify(String(reply.error), "error"); return }
+        clipboardSink.text = String(reply.text || "")
+        clipboardSink.selectAll(); clipboardSink.copy()
+        win.notify("AI 接入信息已复制", "info")
+    }
+    function exportOriginal(path) {
+        const reply = App.invoke("project.export_original", {path: path, overwrite: true}) || {}
+        if (reply.error) { win.notify("导出失败：" + reply.error, "error"); return }
+        win.notify("工程已导出：" + (reply.path || path), "info")
+    }
+    Component.onCompleted: {
+        win.applyMenuBarMode()
+        // The shell opens the design graph for editors; a published window replaces
+        // it with the runtime surface after the workspace finishes its first open.
+        if (win.publishMode && !win.childWindow) Qt.callLater(() => App.workspaces.open("runtime", win.hostId))
+    }
+    onPublishModeChanged: Qt.callLater(win.applyMenuBarMode)
+    // Project switches take two steps while a session is live: the command asks
+    // for a decision, the window asks the user, then stops the run and retries.
+    // Both failures land in a dialog because the notice alone is easy to miss.
+    function openProjectAt(path) { startProjectCommand("project.open", {path: path, discard: true}) }
+    function newProject() { startProjectCommand("project.new", {discard: true}) }
+    function startProjectCommand(op, args) {
+        const reply = App.invoke(op, args) || {}
+        if (reply.error) { showProjectError(reply.error); return }
+        if (reply.requires_runtime_stop) {
+            pendingProjectOp = op; pendingProjectArgs = args
+            runtimeStopDialog.projectName = App.project.name || ""
+            runtimeStopDialog.open(); return
+        }
+        projectJob = reply.job || ""
+    }
+    function confirmRuntimeStop() {
+        runtimeStopDialog.close()
+        const reply = App.invoke("runtime.stop", {}) || {}
+        if (reply.error) { showProjectError(reply.error); return }
+        runtimeStopJob = reply.job || ""
+        if (!runtimeStopJob) showProjectError("无法停止运行")
+    }
+    function showProjectError(message) { projectErrorDialog.message = message; projectErrorDialog.open() }
     function save() {
         if (App.projectPath.length) savingJob = App.invoke("project.save", {}).job || ""
-        else projectSaveOptions.present("save")
+        else saveProject.open()
+    }
+    function saveAs() { saveProject.open() }
+    property string softwareSaveJob: ""
+    property string softwareStopJob: ""
+    property bool softwarePendingSave: false
+    property bool softwareStarted: false
+    function exportSoftware() {
+        if (win.softwareStarted) return
+        win.softwareStarted = true
+        if (!App.projectPath.length) { win.softwarePendingSave = true; saveProject.open(); return }
+        if (App.dirty) { softwareSavePrompt.open(); return }
+        win.continueSoftwareAfterSave()
+    }
+    function saveSoftwareAndContinue() {
+        softwareSavePrompt.close()
+        const reply = App.invoke("project.save", {}) || {}
+        if (reply.error) { win.notify("保存失败：" + reply.error, "error"); win.softwareStarted = false; return }
+        win.softwareSaveJob = reply.job || ""
+        if (!win.softwareSaveJob) win.continueSoftwareAfterSave()
+    }
+    function continueSoftwareAfterSave() {
+        if (App.runtime.running) { softwareRuntimeStop.open(); return }
+        softwareExport.present()
+        win.softwareStarted = false
+    }
+    function stopRuntimeForSoftware() {
+        softwareRuntimeStop.close()
+        const reply = App.invoke("runtime.stop", {}) || {}
+        if (reply.error) { win.notify("停止运行失败：" + reply.error, "error"); win.softwareStarted = false; return }
+        win.softwareStopJob = reply.job || ""
+        if (!win.softwareStopJob) { softwareExport.present(); win.softwareStarted = false }
     }
     onClosing: close => { close.accepted = !!App.invoke("window.close",{window:hostId}).closed }
     PropertyDialogs { id:propertyDialogs; anchors.fill:parent; hostId:win.hostId }
     Connections {
         target: App
         function onExitConfirmation(window) { if (window === hostId) { pendingAction = "close"; unsaved.open() } }
-        function onJobFinished(id) { if (id === savingJob) { savingJob = ""; if (App.job(id).state === "complete" && pendingAction.length) continueAction() } }
-        function onPluginSettingsRequested(){if(!win.childWindow)pluginSettings.open()}
+        function onJobFinished(id) {
+            if (id === savingJob) { savingJob = ""; if (App.job(id).state === "complete" && pendingAction.length) continueAction() }
+            // A failed switch must surface even though the retry path works.
+            if (id === projectJob) {
+                projectJob = ""
+                if (App.job(id).state !== "complete") showProjectError(App.job(id).error || "打开工程失败")
+            }
+            // The confirmed switch continues only after the session is gone.
+            if (id === runtimeStopJob) {
+                runtimeStopJob = ""
+                if (App.job(id).state !== "complete") { showProjectError(App.job(id).error || "停止运行失败"); return }
+                startProjectCommand(pendingProjectOp, pendingProjectArgs)
+            }
+            if (id === softwareSaveJob) {
+                softwareSaveJob = ""
+                if (App.job(id).state !== "complete") { win.notify("保存失败：" + (App.job(id).error || "未知错误"), "error"); win.softwareStarted = false; return }
+                win.continueSoftwareAfterSave()
+            }
+            if (id === softwareStopJob) {
+                softwareStopJob = ""
+                if (App.job(id).state !== "complete") { win.notify("停止运行失败：" + (App.job(id).error || "未知错误"), "error"); win.softwareStarted = false; return }
+                softwareExport.present(); win.softwareStarted = false
+            }
+        }
+        function onPluginSettingsRequested(){if(!win.childWindow)settingsWindow.present(win.publishMode?"general":"plugins")}
+        function onSettingsRequested(page){if(!win.childWindow)settingsWindow.present(String(page||""))}
         function onPluginOpenRequested(){if(!win.childWindow)pluginVersions.present()}
         function onPluginExportRequested(scope,plugin){if(!win.childWindow)pluginExporter.present(scope,plugin)}
     }
-    Shortcut { sequence: "Ctrl+Tab"; onActivated: App.workspaces.cycle(hostId, 1) }
-    Shortcut { sequence: "Ctrl+Shift+Tab"; onActivated: App.workspaces.cycle(hostId, -1) }
+    // Cycling reaches every tab the workspace owns, including hidden editor pages,
+    // so it stays an editor gesture.
+    Shortcut { sequence: "Ctrl+Tab"; enabled:!win.publishMode; onActivated: App.workspaces.cycle(hostId, 1) }
+    Shortcut { sequence: "Ctrl+Shift+Tab"; enabled:!win.publishMode; onActivated: App.workspaces.cycle(hostId, -1) }
     Shortcut { sequence: "F5"; onActivated: App.invoke("runtime.start",{debug:true}) }
     Shortcut { sequence: "Ctrl+F5"; onActivated: App.invoke("runtime.start",{debug:false}) }
     Shortcut { sequence: "F6"; onActivated: App.invoke("runtime.pause",{}) }
@@ -73,39 +201,46 @@ ApplicationWindow {
         visible:!win.childWindow
         height:visible?implicitHeight:0
         enabled:visible
+        // Publish entry point. applyMenuBarMode() hides it while editing.
         Menu {
+            id:publishMenu; objectName:"menu.publish"; title:"应用"
+            Action { objectName:"menu.connection"; text:"复制 AI 接入信息"; onTriggered:win.copyConnectionInfo() }
+            MenuItem { objectName:"menu.exportOriginal"; text:"导出工程…"; visible:App.retainOriginal; onTriggered:exportOriginalFile.open() }
+            MenuSeparator {}
+            Action { text:"关闭窗口"; onTriggered:win.requestAction("close") }
+        }
+        Menu {
+            id:editorFileMenu; objectName:"menu.file"
             title: "文件"
-            Action { text: "新建工程"; shortcut: StandardKey.New; onTriggered: win.requestAction("new") }
-            Action { text: "打开工程…"; shortcut: StandardKey.Open; onTriggered: win.requestAction("open") }
-            Action { text: "保存"; shortcut: StandardKey.Save; onTriggered: win.save() }
-            Action { text: "另存为…"; onTriggered: projectSaveOptions.present("save") }
-            Action { text:"导出工程…";onTriggered:projectSaveOptions.present("export") }
-            Action { text:"工程保存选项…";onTriggered:projectSaveOptions.present("options") }
-            Action { text:"导出工程插件…";onTriggered:pluginExporter.present("project","") }
+            Action { text: "新建工程"; shortcut: StandardKey.New; enabled: !win.publishMode; onTriggered: win.requestAction("new") }
+            Action { text: "打开工程…"; shortcut: StandardKey.Open; enabled: !win.publishMode; onTriggered: win.requestAction("open") }
+            Action { text: "保存工程"; shortcut: StandardKey.Save; enabled: !win.publishMode; onTriggered: win.save() }
+            Action { text: "另存为…"; enabled: !win.publishMode; onTriggered: win.saveAs() }
+            Action { text: "工程信息…"; enabled: !win.publishMode; onTriggered: projectInfo.present() }
+            Action { objectName:"menu.exportSoftware"; text: "导出为软件…"; enabled: !win.publishMode; onTriggered: win.exportSoftware() }
+            Action { text:"导出工程插件…";enabled: !win.publishMode;onTriggered:pluginExporter.present("project","") }
             MenuSeparator {}
             Action { text: "关闭窗口"; onTriggered: win.requestAction("close") }
         }
         Menu {
+            id:editorEditMenu; objectName:"menu.edit"
             title: "编辑"
             Action { text: "撤销"; shortcut: StandardKey.Undo; enabled: !App.readOnly; onTriggered: App.invoke("history.undo", {}) }
             Action { text: "重做"; shortcut: StandardKey.Redo; enabled: !App.readOnly; onTriggered: App.invoke("history.redo", {}) }
             MenuSeparator {}
-            Action { text: App.readOnly ? "进入编辑模式" : "设为只读"; onTriggered: App.invoke("preferences.set", {read_only: !App.readOnly}) }
+            Action { text: App.readOnly ? "进入编辑模式" : "设为只读"; enabled: !win.publishMode; onTriggered: App.invoke("preferences.set", {read_only: !App.readOnly}) }
         }
         Menu {
             title: "工作区"
             Repeater {
-                model: App.workspaces.available
+                // A published window switches between runtime surfaces only.
+                model:win.publishMode?App.workspaces.available.filter(p=>win.publishPages.indexOf(p.key)>=0):App.workspaces.available
                 MenuItem { required property var modelData; text: modelData.title; onTriggered: App.workspaces.open(modelData.key, hostId) }
             }
         }
         Menu {
-            title: "设置"
-            Action { text:"插件管理…";onTriggered:pluginSettings.open() }
-            Action { text: "本地 Python 环境…"; onTriggered: { pythonInput.text = App.pythonPath; pythonSettings.open() } }
-            Action { text:"资源额度…";onTriggered:resourceSettings.open() }
-            Action { text:"后台任务…";onTriggered:backgroundTasks.open() }
-            Action { text: Theme.dark ? "切换浅色主题" : "切换深色主题"; onTriggered: App.invoke("preferences.set", {theme: Theme.dark ? "light" : "dark"}) }
+            objectName:"menu.settings";title: "设置"
+            Action { text: "设置…"; shortcut: "Ctrl+,"; onTriggered: settingsWindow.present() }
         }
         Menu {
             title: "帮助"
@@ -123,7 +258,9 @@ ApplicationWindow {
             Row {
                 id:tabStrip;spacing:1;visible:win.activePage!=="library"
                 Repeater {
-                    model:win.tabs
+                    // A published window keeps runtime tabs; editor pages stay hidden
+                    // even when the shell opened one at startup.
+                    model:win.publishMode?win.tabs.filter(t=>win.publishPages.indexOf(t.key)>=0):win.tabs
                     Rectangle {
                         id:tab;required property var modelData;required property int index
                         objectName:"workspace.tab."+modelData.key;width:140;height:38
@@ -134,16 +271,16 @@ ApplicationWindow {
                         MouseArea {
                             id:hover;anchors.fill:parent;hoverEnabled:true;acceptedButtons:Qt.LeftButton|Qt.RightButton
                             property point start;property bool dragging:false
-                            onPressed:m=>{start=Qt.point(m.x,m.y);dragging=false;if(m.button===Qt.RightButton){tabMenu.key=tab.modelData.key;tabMenu.popup()}}
+                            onPressed:m=>{start=Qt.point(m.x,m.y);dragging=false;if(m.button===Qt.RightButton&&!win.publishMode){tabMenu.key=tab.modelData.key;tabMenu.popup()}}
                             onClicked:m=>{if(m.button===Qt.LeftButton&&!dragging)App.workspaces.open(tab.modelData.key,win.hostId)}
                             onPositionChanged:m=>{if(pressed&&!dragging&&Math.hypot(m.x-start.x,m.y-start.y)>10){dragging=true;App.workspaces.dragPage(tab.modelData.key)}}
                         }
-                        IconButton{anchors.right:parent.right;anchors.verticalCenter:parent.verticalCenter;symbol:"close";text:"关闭标签";width:28;height:28;onClicked:App.workspaces.closePage(tab.modelData.key)}
+                        IconButton{anchors.right:parent.right;anchors.verticalCenter:parent.verticalCenter;symbol:"close";text:"关闭标签";width:28;height:28;visible:!win.publishMode;onClicked:App.workspaces.closePage(tab.modelData.key)}
                         DropArea{anchors.fill:parent;keys:["application/x-corig-workspace"];onEntered:mark.visible=true;onExited:mark.visible=false;onDropped:d=>{mark.visible=false;App.workspaces.acceptDrop(d.getDataAsString("application/x-corig-workspace"),win.hostId,tab.index);d.acceptProposedAction()}}
                         Rectangle{id:mark;visible:false;width:3;height:parent.height;color:Theme.blue}
                     }
                 }
-                IconButton{objectName:"workspace.add";symbol:"plus";text:"打开工作区";visible:!win.childWindow;onClicked:pagesMenu.popup()}
+                IconButton{objectName:"workspace.add";symbol:"plus";text:"打开工作区";visible:!win.childWindow&&!win.publishMode;onClicked:pagesMenu.popup()}
             }
             Label{visible:win.activePage==="library";anchors.left:parent.left;anchors.leftMargin:12;anchors.verticalCenter:parent.verticalCenter;text:"插件库 · "+(App.libraryTarget==="layout"?"界面设计":"功能设计");color:Theme.text}
             Row {
@@ -169,7 +306,7 @@ ApplicationWindow {
                 Rectangle{implicitWidth:1;implicitHeight:20;color:Theme.border;Layout.alignment:Qt.AlignVCenter}
                 Label {
                     objectName:"execution.notice";Layout.fillWidth:true;Layout.minimumWidth:0
-                    text:App.notice;elide:Text.ElideRight;color:App.noticeLevel==="error"?Theme.error:Theme.muted;font.pixelSize:12
+                    text:win.localNotice.length?win.localNotice:App.notice;elide:Text.ElideRight;color:(win.localNotice.length?win.localNoticeLevel:App.noticeLevel)==="error"?Theme.error:Theme.muted;font.pixelSize:12
                     ToolTip.visible:noticeHover.hovered&&truncated;ToolTip.delay:400;ToolTip.text:text
                     HoverHandler{id:noticeHover}
                 }
@@ -193,7 +330,7 @@ ApplicationWindow {
     }
     Menu {
         id: pagesMenu
-        Repeater { model:App.workspaces.available; MenuItem { required property var modelData; text:modelData.title; onTriggered:App.workspaces.open(modelData.key,win.hostId) } }
+        Repeater { model:win.publishMode?App.workspaces.available.filter(p=>win.publishPages.indexOf(p.key)>=0):App.workspaces.available; MenuItem { required property var modelData; text:modelData.title; onTriggered:App.workspaces.open(modelData.key,win.hostId) } }
     }
     Menu {
         id: tabMenu; property string key
@@ -201,20 +338,46 @@ ApplicationWindow {
         MenuItem { text: "关闭标签"; onTriggered: App.workspaces.closePage(tabMenu.key) }
         MenuItem { text:"从工程移除工作区"; visible:App.workspaces.available.some(p=>p.key===tabMenu.key&&!p.builtin); enabled:!App.readOnly&&!App.busy; onTriggered:App.invoke("workspace.remove",{page:tabMenu.key}) }
     }
-    FileDialog { id: openProject; title: "打开工程"; nameFilters: ["CoRig 工程 (*.crpj *.corig)"]; onAccepted: App.invoke("project.open", {path: selectedFile.toString(), discard:true}) }
+    FileDialog { id: openProject; title: "打开工程"; nameFilters: ["CoRig 工程 (*.crpj *.corig)"]; onAccepted: win.openProjectAt(selectedFile.toString()) }
     FileDialog {
-        id:saveProject;title:operation==="export"?"导出工程":"保存工程";fileMode:FileDialog.SaveFile;defaultSuffix:"crpj";nameFilters:["CoRig 工程 (*.crpj)"]
-        property string operation:"save"
-        property bool includePlugins:true
-        onAccepted:{const reply=App.invoke(operation==="export"?"project.export":"project.save",{path:selectedFile.toString(),include_plugins:includePlugins});if(operation!=="export")win.savingJob=reply.job||""}
+        id:saveProject;title:"另存为工程";fileMode:FileDialog.SaveFile;defaultSuffix:"crpj";nameFilters:["CoRig 工程 (*.crpj)"]
+        onAccepted:{
+            const reply=App.invoke("project.save",{path:selectedFile.toString()})||{}
+            if(reply.error){win.notify("保存失败："+reply.error,"error");if(win.softwarePendingSave){win.softwarePendingSave=false;win.softwareStarted=false};return}
+            win.savingJob=reply.job||""
+            if(win.softwarePendingSave){win.softwarePendingSave=false;win.softwareSaveJob=win.savingJob;if(!win.softwareSaveJob)win.continueSoftwareAfterSave()}
+        }
+        onRejected: if(win.softwarePendingSave){win.softwarePendingSave=false;win.softwareStarted=false}
     }
-    ProjectSaveOptions{id:projectSaveOptions;onFileRequested:(operation,includePlugins)=>{saveProject.operation=operation;saveProject.includePlugins=includePlugins;saveProject.open()}}
+    // Published applications export the retained original without touching the
+    // runtime snapshot; the native dialog already asked about overwriting.
+    FileDialog { id: exportOriginalFile; title: "导出工程"; fileMode: FileDialog.SaveFile; defaultSuffix: "crpj"; nameFilters: ["CoRig 工程 (*.crpj)"]; onAccepted: win.exportOriginal(selectedFile.toString()) }
+    // Hidden sink for the clipboard write: Qt Quick exposes no clipboard API, and the
+    // publish window must not add a command for it.
+    TextEdit { id: clipboardSink; visible: false; width: 1; height: 1 }
+    Timer { id: localNoticeTimer; interval: 2600; onTriggered: { win.localNotice = ""; win.localNoticeLevel = "info" } }
+    ProjectInfoDialog{id:projectInfo}
+    SoftwareExportDialog{id:softwareExport}
+    SettingsWindow{id:settingsWindow}
     PluginExportDialog{id:pluginExporter}
-    PluginManager{id:pluginSettings}
     PluginVersionDialog{id:pluginVersions}
     UpdateDialog{id:updateDialog}
-    ResourceSettings{id:resourceSettings}
-    BackgroundTasks{id:backgroundTasks}
+    Dialog {
+        id: softwareSavePrompt; title: "先保存工程"; modal: true; anchors.centerIn: parent; width: 430
+        contentItem: Label { text: "导出为软件需要先保存当前工程。保存后继续导出？"; color: Theme.text; padding: 12; wrapMode: Text.WordWrap }
+        footer: DialogButtonBox {
+            ActionButton { text: "保存并继续"; onClicked: win.saveSoftwareAndContinue() }
+            ActionButton { text: "取消"; onClicked: { softwareSavePrompt.close(); win.softwareStarted = false } }
+        }
+    }
+    Dialog {
+        id: softwareRuntimeStop; title: "工程正在运行"; modal: true; anchors.centerIn: parent; width: 450
+        contentItem: Label { text: "导出为软件前需要停止当前运行，避免把运行中的临时状态误当成工程内容。停止运行并继续？"; color: Theme.text; padding: 12; wrapMode: Text.WordWrap }
+        footer: DialogButtonBox {
+            ActionButton { text: "停止并继续"; onClicked: win.stopRuntimeForSoftware() }
+            ActionButton { text: "取消"; onClicked: { softwareRuntimeStop.close(); win.softwareStarted = false } }
+        }
+    }
     Dialog {
         id: unsaved; title: "工程有未保存修改"; modal: true; anchors.centerIn: parent; width: 400
         contentItem: Label { text: "保存当前工程后再继续？"; color: Theme.text; padding: 12 }
@@ -225,18 +388,25 @@ ApplicationWindow {
         }
     }
     Dialog {
-        id: pythonSettings; title: "本地 Python 环境"; modal: true; width: 590; anchors.centerIn: parent
-        ColumnLayout {
-            anchors.fill: parent; spacing: 12
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "选择本机或虚拟环境中的 Python 3.10 及以上版本。官方功能无需 Python；软件不会修改所选环境。"; color: Theme.muted }
-            RowLayout { Layout.fillWidth: true; TextField { id: pythonInput; objectName: "settings.python"; Layout.fillWidth: true; placeholderText: "选择 python.exe" } ActionButton { text: "浏览…"; onClicked: pythonFile.open() } }
-            RowLayout { ActionButton { text: "保存选择"; onClicked: App.invoke("preferences.set", {python:pythonInput.text}) } ActionButton { text: "检查环境"; onClicked: { pythonProbe.jobId = App.invoke("python.probe", {}).job || "" } } }
-            TextArea { id: pythonProbe; property string jobId: ""; Layout.fillWidth: true; Layout.preferredHeight: 120; readOnly: true; wrapMode: Text.WrapAnywhere; text: App.pythonPath ? "已选择：" + App.pythonPath : "尚未选择本地解释器" }
-            Connections { target: App; function onJobFinished(id) { if (id === pythonProbe.jobId) pythonProbe.text = JSON.stringify(App.job(id), null, 2) } }
+        id: runtimeStopDialog; objectName: "dialog.project.runtime"; modal: true; anchors.centerIn: parent; width: 430
+        property string projectName: ""
+        title: "工程正在运行"
+        contentItem: Label {
+            text: "当前工程正在运行，切换工程会结束本次运行。停止运行并打开「" + runtimeStopDialog.projectName + "」？"
+            color: Theme.text; padding: 12; wrapMode: Text.WordWrap
         }
-        standardButtons: Dialog.Close
+        footer: DialogButtonBox {
+            ActionButton { objectName: "dialog.project.runtime.open"; text: "停止并打开"; DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole; onClicked: win.confirmRuntimeStop() }
+            ActionButton { objectName: "dialog.project.runtime.cancel"; text: "取消"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole; onClicked: { win.pendingProjectOp = ""; runtimeStopDialog.close() } }
+        }
     }
-    FileDialog { id: pythonFile; title: "选择本地 Python"; nameFilters: ["Python (python.exe python3.exe)", "所有文件 (*)"]; onAccepted: pythonInput.text = decodeURIComponent(selectedFile.toString().replace(/^file:\/\/\//, "")) }
+    Dialog {
+        id: projectErrorDialog; objectName: "dialog.project.error"; modal: true; anchors.centerIn: parent; width: 430
+        property string message: ""
+        title: "无法打开工程"
+        contentItem: Label { objectName: "dialog.project.error.text"; text: projectErrorDialog.message; color: Theme.text; padding: 12; wrapMode: Text.WordWrap }
+        footer: DialogButtonBox { ActionButton { text: "关闭"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole; onClicked: projectErrorDialog.close() } }
+    }
     Dialog {
         id: about; title: "联调 · CoRig 0.4"; width: 510; anchors.centerIn: parent; standardButtons: Dialog.Close
         Label { width: parent.width; wrapMode: Text.WrapAnywhere; color: Theme.text; text: "原生 C++ / Qt Quick 功能设计工作台\n\n本地接口：" + App.dataDirectory + "/.sessions/api.json\n\n五个工作区共享同一个工程与运行会话。可将标签拖出为独立窗口，也可拖回其他窗口。" }

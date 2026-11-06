@@ -16,6 +16,7 @@ static const QByteArray Magic = QByteArrayLiteral("CoRig\0CPP3\n");
 QVariantMap emptyProject(const QString &name)
 {
     return {{"format","corig-project"}, {"schema_version",3}, {"name",name},
+        {"description",""}, {"author",""}, {"version","1.0.0"},
         {"nodes",QVariantList{}}, {"wires",QVariantList{}}, {"user_plugins",QVariantList{}}, {"resources",QVariantMap{}},
         {"ui",QVariantMap{{"root","root"}, {"items",QVariantList{QVariantMap{{"id","root"}, {"plugin","layout.canvas"}, {"children",QVariantList{}}, {"properties",QVariantMap{{"width",1280.},{"height",720.},{"grid_size",16},{"background","#111923"}}}}}}}}};
 }
