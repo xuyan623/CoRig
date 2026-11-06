@@ -1,4 +1,5 @@
 #include "controller.h"
+#include "command_registry.h"
 #include "workspaces.h"
 #include "quick/graph_geometry.h"
 #include "updates.h"
@@ -11,6 +12,8 @@
 #include <QQuickItem>
 #include <QQuickItemGrabResult>
 #include <QQuickWindow>
+#include <QImage>
+#include <QDateTime>
 #include <QSaveFile>
 #include <QUrl>
 #include <QRegularExpression>
@@ -32,7 +35,7 @@ QVariantMap Controller::schema() const
         {"update.state",{}},{"update.check",{}},{"update.install",{}},
         {"registry",{}},{"schema",{}},{"project.get",{}},{"project.validate",{}},{"project.new",{"name","discard"}},
         {"project.open",{"path","discard","plugin_selections"}},{"project.save",{"path","include_plugins"}},
-        {"project.export",{"path","include_plugins"}},{"project.options",{"include_plugins"}},{"project.rename",{"name"}},
+        {"project.export",{"path","include_plugins"}},{"project.options",{"include_plugins"}},{"project.rename",{"name"}},{"project.info",{"name","description","author","version"}},
         {"history.undo",{}},{"history.redo",{}},{"batch",{"commands"}},
         {"graph.node.add",{"id","plugin","title","config","position","orientation","placed"}},
         {"graph.node.remove",{"id","ids"}},{"graph.node.move",{"id","position"}},{"graph.node.rotate",{"id","degrees"}},
@@ -41,6 +44,7 @@ QVariantMap Controller::schema() const
         {"graph.wire.handles",{"id","x","y"}},{"graph.activity",{}},
         {"graph.connection.options",{"node","port"}},
         {"node.configure",{"node","changes","persist","confirmed","revision"}},{"node.configure.plan",{"node","changes"}},{"node.state",{"node","detailed"}},{"node.action",{"node","action","args"}},
+        {"params.set",{"node","param","value"}},{"params.get",{"node","param"}},{"params.reset",{"scope"}},{"app.connection",{}},{"project.export_original",{"path","overwrite"}},
         {"property.get",{"scope","target"}},{"property.stage",{"scope","target","changes"}},{"property.commit",{"scope","target","changes","confirmed","revision"}},{"property.discard",{"scope","target"}},{"property.drafts",{}},
         {"property.text",{"scope","target","field","text"}},
         {"runtime.state",{}},{"runtime.start",{"debug"}},{"runtime.debug",{"enabled"}},{"runtime.pause",{}},{"runtime.stop",{}},{"runtime.reset",{}},{"runtime.step",{"mode","source"}},
@@ -61,7 +65,7 @@ QVariantMap Controller::schema() const
         {"plugin.state",{}},{"plugin.tree",{"scope"}},{"plugin.settings",{}},{"plugin.directory",{}},{"plugin.enable",{"plugin","plugins","enabled"}},
         {"plugin.export",{"plugin","path","project","plugins","directory","overwrite","scope"}},{"plugin.export.dialog",{"scope","plugin"}},
         {"plugin.remove",{"plugin","package"}},{"python.probe",{"dependencies"}},{"job.get",{"id"}},
-        {"workspace.open",{"page","window"}},{"workspace.close",{"page","discard"}},{"workspace.detach",{"page","x","y"}},
+        {"workspace.open",{"page","window","activate"}},{"workspace.close",{"page","discard"}},{"workspace.detach",{"page","x","y"}},
         {"workspace.list",{}},{"workspace.configure",{"page","changes"}},{"workspace.remove",{"page"}},
         {"container.layout",{"id","width","height","grid"}},
         {"workspace.move",{"page","window","index"}},{"window.close",{"window","discard"}},{"window.pin",{"window","enabled"}},
@@ -71,11 +75,19 @@ QVariantMap Controller::schema() const
         {"controls.click",{"id","page"}},{"controls.focus",{"id","page"}},{"controls.commit",{"id","page"}},
         {"controls.key",{"id","page","key","text","modifiers"}},
         {"controls.pointer",{"id","page","type","x","y","button","buttons","delta_x","delta_y","modifiers"}},
-        {"capture",{"target","path","width","height"}}
+        {"settings.open",{"page"}},
+        {"publish.start",{"project","directory","name","version","app_id","retain_original","overwrite","python"}},
+        {"publish.state",{}},{"publish.cancel",{"job"}},{"publish.log",{}},
+        {"capture",{"target","path","width","height","job","window"}}
     };
     QVariantMap commands;
     for (auto i = fields.cbegin(); i != fields.cend(); ++i) commands.insert(i.key(),QVariantMap{{"arguments",i.value()}});
-    return {{"application","CoRig"},{"api_version",3},{"version","0.4.3"},{"commands",commands},{"async","A job is complete only after its operation succeeds; poll job.get"},
+    // The registry owns the machine-readable signature and its digest; the legacy
+    // argument-name map stays so existing clients keep working.
+    const auto &registry = CommandRegistry::instance();
+    return {{"application","CoRig"},{"api_version",3},{"version","0.4.4"},{"commands",commands},{"signatures",registry.signatures()},
+        {"schema_digest",registry.digest()},{"app_mode",publishMode_ ? "publish" : "editor"},
+        {"async","A job is complete only after its operation succeeds; poll job.get"},
         {"values",QVariantMap{{"bytes","{type:bytes,base64:...,length:N}"},{"samples","{time:seconds,values:{name:number}}"}}}};
 }
 
@@ -85,6 +97,25 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
     if (!commands.contains(op)) throw Error("未知操作：" + op);
     const auto fields = commands.value(op).toMap().value("arguments").toStringList();
     for (auto i = args.cbegin(); i != args.cend(); ++i) if (!fields.contains(i.key())) throw Error("操作 " + op + " 不接受参数：" + i.key());
+    // Publication is enforced at the command boundary, before any handler runs.
+    // batch is validated as a whole first: one forbidden child rejects the batch
+    // without executing earlier children.
+    if (publishMode_) {
+        ensureModeAllowed(op);
+        if (op == "batch") for (const auto &entry : args.value("commands").toList()) {
+            const auto child = entry.toMap(); const auto childOp = child.value("op").toString();
+            if (!commands.contains(childOp)) throw Error("未知操作：" + childOp);
+            ensureModeAllowed(childOp);
+            const auto childArgs = child.value("args").toMap();
+            const auto childFields = commands.value(childOp).toMap().value("arguments").toStringList();
+            for (auto i = childArgs.cbegin(); i != childArgs.cend(); ++i)
+                if (!childFields.contains(i.key())) throw Error("操作 " + childOp + " 不接受参数：" + i.key());
+        }
+    }
+    if (op == "app.connection") {
+        if (!connectionProvider_) throw Error("AI 接入信息尚未就绪");
+        return connectionProvider_();
+    }
     const auto guard = draftGuard(op,args); if (!guard.isEmpty()) return guard;
     if (op == "property.drafts") return dirtyProperties();
     if (op.startsWith("property.")) {
@@ -132,7 +163,17 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
     if (op == "plugin.export.dialog") { emit pluginExportRequested(args.value("scope","project").toString(),args.value("plugin").toString()); return QVariantMap{{"opened",true}}; }
     if (op == "plugin.directory") { if (!QDesktopServices::openUrl(QUrl::fromLocalFile(pluginState().value("directory").toString()))) throw Error("无法打开插件文件夹"); return QVariantMap{{"opened",true}}; }
     if (op == "plugin.settings") { plugins_->rescan(); emit pluginSettingsRequested(); return QVariantMap{{"opened",true}}; }
-    if (op == "update.state") return QVariantMap{{"supported",!maintenanceTool().isEmpty()},{"version","0.4.3"}};
+    if (op == "settings.open") {
+        auto page = args.value("page").toString();
+        if (page.isEmpty()) page = "general";
+        const QStringList allowed = publishMode_
+            ? QStringList{"general","tasks"}
+            : QStringList{"general","project","plugins","python","resources","tasks"};
+        if (!allowed.contains(page)) throw Error("当前模式没有设置页：" + page);
+        emit settingsRequested(page);
+        return QVariantMap{{"opened",true},{"page",page}};
+    }
+    if (op == "update.state") return QVariantMap{{"supported",!maintenanceTool().isEmpty()},{"version","0.4.4"}};
     if (op == "update.check") return launchTask(op,[this] { return checkUpdates([this] { return closing_.load(); }); });
     if (op == "update.install") {
         if (dirty_) throw Error("请先保存当前工程，再开始更新");
@@ -186,6 +227,10 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
     if (op == "io.ports") { const auto package = catalog_.servicePackage("io"); return launchTask(op,[this,package] { return pluginService(package,{},"list_ports",{}); }); }
     if (op == "project.validate") { validateProject(project_,catalog_); return QVariantMap{{"valid",true}}; }
     if (op == "preferences.set") {
+        // A published application keeps its data root and Python environment
+        // immutable; theme and log path are the only user preferences.
+        if (publishMode_ && (args.contains("read_only") || args.contains("python")))
+            throw Error("发布运行模式不允许修改此设置");
         if (args.contains("theme")) { const auto theme = args.value("theme").toString(); if (theme != "dark" && theme != "light") throw Error("主题需要 dark 或 light"); theme_ = theme; settings_->setValue("theme",theme); }
         if (args.contains("python")) { if (engine_->observation().value("active").toBool()) throw Error("请先停止会话再切换 Python 环境"); python_->selectInterpreter(args.value("python").toString()); settings_->setValue("python",pythonPath()); }
         if (args.contains("read_only")) readOnly_ = args.value("read_only").toBool();
@@ -201,15 +246,28 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
     if (op == "app.restart") {
         if (dirty_ && !args.value("discard").toBool()) throw Error("请先保存当前工程，再重启 CoRig");
         if (busy_) throw Error("请等待工程操作完成");
-        QStringList arguments{"--data-dir",dataDirectory_};
-        const auto path = args.value("path",projectPath_).toString();
-        if (!path.isEmpty()) arguments.append(path);
-        if (args.contains("plugin_selections")) arguments << "--plugin-selections" << QString::fromLatin1(QJsonDocument::fromVariant(args.value("plugin_selections")).toJson(QJsonDocument::Compact).toBase64());
+        // A published application restarts itself without arguments: the payload
+        // manifest decides the mode and the data root again, so no shortcut can
+        // redirect it back into an editor session.
+        QStringList arguments;
+        if (!publishMode_) {
+            arguments << "--data-dir" << dataDirectory_;
+            const auto path = args.value("path",projectPath_).toString();
+            if (!path.isEmpty()) arguments.append(path);
+            if (args.contains("plugin_selections")) arguments << "--plugin-selections" << QString::fromLatin1(QJsonDocument::fromVariant(args.value("plugin_selections")).toJson(QJsonDocument::Compact).toBase64());
+        }
         if (!QProcess::startDetached(QCoreApplication::applicationFilePath(),arguments)) throw Error("无法重新启动 CoRig");
         exitDiscarded_ = true; QTimer::singleShot(50,qApp,&QCoreApplication::quit);
         return QVariantMap{{"restarting",true}};
     }
     if (op == "project.open" || op == "project.new") {
+        // Switching projects ends the running session, so this is a decision the
+        // window can offer to perform. Failing here would only reach the
+        // status-bar notice, which looks like the click did nothing.
+        if (engine_->observation().value("running").toBool()) {
+            qWarning("工程切换推迟：运行中（%s）",qUtf8Printable(op));
+            return QVariantMap{{"requires_runtime_stop",true},{"project",project_.value("name").toString()}};
+        }
         requireEditable();
         if (dirty_ && !args.value("discard").toBool()) throw Error("请先保存当前工程，或明确丢弃修改");
         auto path = args.value("path").toString(); if (QUrl(path).isLocalFile()) path = QUrl(path).toLocalFile();
@@ -276,6 +334,22 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
             });
     }
     if (op == "project.rename") { requireEditable(true); auto next = project_; const auto name = args.value("name").toString().trimmed(); if (name.isEmpty()) throw Error("工程名称不能为空"); next["name"] = name; return commit({next,{}, {},false},"工程已重命名"); }
+    if (op == "project.info") {
+        requireEditable(true);
+        auto next = project_;
+        if (args.contains("name")) {
+            const auto name = args.value("name").toString().trimmed();
+            if (name.isEmpty()) throw Error("工程名称不能为空");
+            next["name"] = name;
+        }
+        for (const auto &field : {QStringLiteral("description"), QStringLiteral("author"), QStringLiteral("version")}) {
+            if (!args.contains(field)) continue;
+            const auto value = args.value(field).toString().trimmed();
+            if (field == QStringLiteral("version") && value.isEmpty()) throw Error("工程版本不能为空");
+            next[field] = value;
+        }
+        return commit({next,{}, {},false},"工程信息已修改");
+    }
     if (op == "history.undo" || op == "history.redo") {
         requireEditable(); auto &source = op == "history.undo" ? undo_ : redo_; if (source.isEmpty()) throw Error("没有可" + QString(op == "history.undo" ? "撤销" : "重做") + "的操作");
         const auto candidate = source.last(), previous = project_; busy_ = true; emit busyChanged();
@@ -289,7 +363,7 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
         if (selectedKind_ == "node" && selectedNodes_.isEmpty() && !selected_.isEmpty()) selectedNodes_.append(selected_);
         emit selectionChanged(); return QVariantMap{{"id",selected_},{"kind",selectedKind_},{"ids",selectedNodes_}};
     }
-    if (op == "graph.fit") { if (workspaces_) workspaces_->open("graph"); emit graphFocusRequested({}); return QVariantMap{{"fitted",true}}; }
+    if (op == "graph.fit") { if (workspaces_) workspaces_->open("graph",{},false); emit graphFocusRequested({}); return QVariantMap{{"fitted",true}}; }
     if (op == "graph.activity") {
         const auto page = workspaces_ ? workspaces_->page("graph") : nullptr;
         const auto renderer = page ? page->property("wireRenderer").value<QObject *>() : nullptr;
@@ -299,25 +373,231 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
     }
     if (op == "graph.overlaps") { QVariantList overlaps; for (const auto &entry : graphNodes_) if (entry.toMap().value("overlap").toBool()) overlaps.append(entry.toMap().value("id")); return overlaps; }
     if (op == "graph.wire.handles") return wireEditState(args.value("id").toString(),args.value("x",0.).toDouble(),args.value("y",0.).toDouble());
+    if (op == "project.export_original") {
+        if (!publishMode_) throw Error("只有发布应用能导出留存工程");
+        if (!retainOriginal_) throw Error("该应用发布时未留存可导出的工程");
+        const auto target = args.value("path").toString();
+        if (target.isEmpty()) throw Error("project.export_original 需要 path");
+        const auto source = runOptions().payloadRoot + QStringLiteral("/project/runtime.crpj");
+        if (!QFileInfo(source).isFile()) throw Error("发布载荷缺少工程快照");
+        if (QFileInfo::exists(target) && !args.value("overwrite").toBool()) throw Error("目标已存在：" + target);
+        QFile input(source); if (!input.open(QIODevice::ReadOnly)) throw Error("无法读取留存工程");
+        QSaveFile output(target);
+        if (!output.open(QIODevice::WriteOnly) || output.write(input.readAll()) < 0 || !output.commit())
+            throw Error("无法写入工程文件：" + target);
+        return QVariantMap{{"exported",true},{"path",QFileInfo(target).absoluteFilePath()}};
+    }
+    if (op == "params.set") {
+        if (!publishMode_) throw Error("用户参数只在发布运行模式可用");
+        const auto node = args.value("node").toString();
+        const auto param = args.value("param").toString();
+        const auto value = args.value("value");
+        if (node.isEmpty() || param.isEmpty()) throw Error("params.set 需要 node 与 param");
+        const auto design = nodeDesign(node); if (design.isEmpty()) throw Error("节点不存在：" + node);
+        const auto plugin = design.value("plugin").toString();
+        const auto definition = catalog_.definition(plugin);
+        const auto properties = definition.value("properties").toMap();
+        if (!properties.contains(param)) throw Error("节点未声明参数：" + param);
+        const auto current = design.value("config").toMap();
+        const bool controlValue = plugin.startsWith("control.") && param == QStringLiteral("value");
+        // Control ranges live in sibling config values, not in the property
+        // declaration, and a stopped session has no node to ask. Run the same
+        // business check set_value uses before anything reaches the overlay.
+        if (controlValue) {
+            if (plugin == QStringLiteral("control.number") || plugin == QStringLiteral("control.slider")) {
+                const auto number = finiteNumber(value,QStringLiteral("控件值"));
+                if (current.contains(QStringLiteral("minimum")) && number < current.value(QStringLiteral("minimum")).toDouble()) throw Error("控件值小于下限");
+                if (current.contains(QStringLiteral("maximum")) && number > current.value(QStringLiteral("maximum")).toDouble()) throw Error("控件值超过上限");
+            } else if (plugin == QStringLiteral("control.checkbox")) {
+                if (value.metaType().id() != QMetaType::Bool) throw Error("控件值需要布尔值");
+            } else if (plugin == QStringLiteral("control.select")) {
+                const auto choices = current.value(QStringLiteral("choices")).toList();
+                if (!choices.isEmpty() && !choices.contains(value)) throw Error("控件值不在选项中");
+            }
+        }
+        // Validate the complete resulting configuration, not just this value: a
+        // value that changes dynamic ports must fail before anything is stored.
+        const auto config = catalog_.checkedConfig(plugin,{{param,value}},current);
+        const auto before = catalog_.ports(plugin,current);
+        const auto after = catalog_.ports(plugin,config);
+        bool samePorts = before.size() == after.size();
+        for (qsizetype i = 0; samePorts && i < before.size(); ++i)
+            if (before[i].describe() != after[i].describe()) samePorts = false;
+        if (!samePorts) throw Error("发布运行模式不能改变节点端口或已连接的导线");
+        const auto previous = current.value(param);
+        const bool hadPrevious = current.contains(param);
+        // The baseline always comes from the shipped snapshot, never from the
+        // current in-memory copy: a temporary persist=false change must not
+        // become the value reset() restores later.
+        QVariantMap baselineConfig;
+        for (const auto &entry : baselineProject_.value("nodes").toList())
+            if (entry.toMap().value("id") == node) baselineConfig = entry.toMap().value("config").toMap();
+        if (baselineConfig.contains(param)) params_->captureBaseline(node,param,baselineConfig.value(param));
+        // The accepted value is visible to params.get immediately; the engine
+        // executes the same change below and a rejected runtime change rolls the
+        // overlay back, so a failed call never leaves a stored value behind.
+        params_->setNode(node,param,value); params_->scheduleSave();
+        auto next = project_; auto nodes = next.value("nodes").toList();
+        for (auto &entry : nodes) { auto item = entry.toMap(); if (item.value("id") != node) continue; item["config"] = config; entry = item; }
+        next["nodes"] = nodes; project_ = next; emit projectChanged();
+        const auto rollback = [this,node,param,previous,hadPrevious,current] {
+            if (hadPrevious) params_->setNode(node,param,previous); else params_->removeNode(node,param);
+            params_->scheduleSave();
+            auto restored = project_; auto restoredNodes = restored.value("nodes").toList();
+            for (auto &entry : restoredNodes) {
+                auto item = entry.toMap(); if (item.value("id") != node) continue;
+                item["config"] = current; entry = item;
+            }
+            restored["nodes"] = restoredNodes; project_ = restored; emit projectChanged();
+        };
+        const bool active = engine_->observation().value("active").toBool();
+        const bool running = engine_->observation().value("running").toBool();
+        if (!active) {
+            // No session yet: keep the engine's project copy in step so a later
+            // runtime.start runs the value the overlay will replay on restart.
+            engine_->submit("project.apply",{{"project",next}});
+            return QVariantMap{{"updated",true},{"node",node},{"param",param}};
+        }
+        // Controls publish a value event, so their commit must use the same node
+        // action the editor uses; it is valid while running and while paused.
+        if (controlValue) {
+            auto job = launchEngine("node.action",{{"node",node},{"action","set_value"},{"args",QVariantMap{{"value",value}}}},
+                [rollback](const QVariant &, const QString &error) { if (!error.isEmpty()) rollback(); });
+            job["updated"] = true; job["node"] = node; job["param"] = param;
+            return job;
+        }
+        if (!running) {
+            // Paused: a non-runtime_editable parameter is a legal design-value
+            // change, exactly as node.configure treats it. Reload the project
+            // instead of asking the engine's running-only configure path.
+            engine_->submit("project.apply",{{"project",next}});
+            return QVariantMap{{"updated",true},{"node",node},{"param",param}};
+        }
+        // Running: every other parameter goes through the engine's runtime
+        // configure path, which needs the full design to rebuild the node.
+        auto engineDesign = design; engineDesign["config"] = config;
+        auto job = launchEngine("node.configure",{{"node",node},{"design",engineDesign},{"changes",QVariantMap{{param,value}}},{"persist",false}},
+            [rollback](const QVariant &, const QString &error) { if (!error.isEmpty()) rollback(); });
+        job["updated"] = true; job["node"] = node; job["param"] = param;
+        return job;
+    }
+    if (op == "params.get") {
+        if (!publishMode_) throw Error("用户参数只在发布运行模式可用");
+        const auto node = args.value("node").toString(), param = args.value("param").toString();
+        if (node.isEmpty()) return params_->values();
+        return QVariantMap{{"node",node},{"param",param},{"value",params_->nodeValue(node,param)}};
+    }
+    if (op == "params.reset") {
+        if (!publishMode_) throw Error("用户参数只在发布运行模式可用");
+        // Reset restores the shipped snapshot itself, not a value captured from
+        // the current session: temporary or saved changes must never survive it.
+        const auto next = baselineProject_.isEmpty() ? project_ : baselineProject_;
+        params_->reset(); project_ = next; emit projectChanged();
+        // Restoring the shipped values must reach the live engine as well; the
+        // overlay alone only changes what the next start replays. The session is
+        // rebuilt so retained node state (a control's displayed value) resets too.
+        const bool running = engine_->observation().value("running").toBool();
+        engine_->submit("runtime.reset",{{"project",next}});
+        if (running) engine_->submit("runtime.start");
+        return QVariantMap{{"reset",true},{"scope",args.value("scope","all")}};
+    }
     if (op == "node.configure") {
         const auto id = args.value("node").toString(); const auto design = nodeDesign(id); if (design.isEmpty()) throw Error("节点不存在：" + id);
-        const bool running = engine_->observation().value("running").toBool(); const bool persist = args.value("persist",!readOnly_).toBool();
+        const bool running = engine_->observation().value("running").toBool();
+        // Published applications have no editing mode, so every configure is a
+        // parameter change: it goes through the engine and the user overlay.
+        const bool persist = args.value("persist",publishMode_ || !readOnly_).toBool();
         const auto plan = nodeConfigurationPlan(project_,catalog_,id,args.value("changes").toMap());
         if (plan.value("requires_confirmation").toBool()) {
             if (running || !persist) throw Error("改变已连接端口需要先暂停，并修改工程设计");
             if (!args.value("confirmed").toBool() || args.value("revision") != plan.value("revision")) return plan;
         }
+        if (publishMode_) {
+            // A published application never edits the design. Every configure is a
+            // validated parameter change with a fixed topology: a change that would
+            // alter the node's ports (for example a dynamic output list) is refused
+            // instead of deleting the wires that no longer match.
+            if (busy_) throw Error("工程操作尚未完成");
+            const auto changes = args.value("changes").toMap();
+            const auto plugin = design.value("plugin").toString();
+            const auto definition = catalog_.definition(plugin);
+            const auto current = design.value("config").toMap();
+            const auto config = catalog_.checkedConfig(plugin,changes,current);
+            const auto before = catalog_.ports(plugin,current);
+            const auto after = catalog_.ports(plugin,config);
+            bool samePorts = before.size() == after.size();
+            for (qsizetype i = 0; samePorts && i < before.size(); ++i)
+                if (before[i].describe() != after[i].describe()) samePorts = false;
+            if (!samePorts) throw Error("发布运行模式不能改变节点端口或已连接的导线");
+            if (running) for (auto i = changes.cbegin(); i != changes.cend(); ++i)
+                if (!definition.value("properties").toMap().value(i.key()).toMap().value("runtime_editable").toBool())
+                    throw Error("该参数需要暂停后修改：" + i.key());
+            if (persist) {
+                QVariantMap baselineConfig;
+                for (const auto &entry : baselineProject_.value("nodes").toList())
+                    if (entry.toMap().value("id") == id) baselineConfig = entry.toMap().value("config").toMap();
+                for (auto i = changes.cbegin(); i != changes.cend(); ++i)
+                    if (baselineConfig.contains(i.key())) params_->captureBaseline(id,i.key(),baselineConfig.value(i.key()));
+            }
+            auto next = project_; auto nodes = next.value("nodes").toList();
+            for (auto &entry : nodes) { auto item = entry.toMap(); if (item.value("id") != id) continue; item["config"] = config; entry = item; }
+            next["nodes"] = nodes; project_ = next; emit projectChanged();
+            if (persist) {
+                for (auto i = changes.cbegin(); i != changes.cend(); ++i) params_->setNode(id,i.key(),i.value());
+                params_->scheduleSave();
+            }
+            if (running) {
+                const auto rollback = [this,id,persist,current,changes] {
+                    if (persist) for (auto i = changes.cbegin(); i != changes.cend(); ++i) {
+                        if (current.contains(i.key())) params_->setNode(id,i.key(),current.value(i.key()));
+                        else params_->removeNode(id,i.key());
+                    }
+                    params_->scheduleSave();
+                    auto restored = project_; auto items = restored.value("nodes").toList();
+                    for (auto &entry : items) { auto item = entry.toMap(); if (item.value("id") == id) { item["config"] = current; entry = item; } }
+                    restored["nodes"] = items; project_ = restored; emit projectChanged();
+                };
+                // The engine rebuilds the node from this design; without it a
+                // configure request fails as "插件不存在".
+                auto engineDesign = design; engineDesign["config"] = config;
+                return launchEngine("node.configure",{{"node",id},{"design",engineDesign},{"changes",changes},{"persist",false}},
+                    [this,id,persist,rollback](const QVariant &result, const QString &error) {
+                        if (!error.isEmpty()) { rollback(); return; }
+                        if (!persist) return;
+                        // Store the normalized values the engine accepted, not the raw
+                        // request, so the overlay replays exactly what ran.
+                        const auto checked = result.toMap().value("config").toMap();
+                        auto applied = project_; auto items = applied.value("nodes").toList();
+                        for (auto &entry : items) { auto item = entry.toMap(); if (item.value("id") == id) { item["config"] = checked; entry = item; } }
+                        applied["nodes"] = items; project_ = applied; emit projectChanged();
+                    });
+            }
+            // Paused or stopped: reload the validated project so the engine sees the
+            // same values the overlay will replay on the next start.
+            engine_->submit("project.apply",{{"project",next}});
+            return QVariantMap{{"updated",true},{"node",id},{"config",config}};
+        }
         if (running || !persist) {
             if (busy_) throw Error("工程操作尚未完成");
-            if (persist && readOnly_) throw Error("只读模式不能保存运行参数到设计");
+            if (persist && readOnly_ && !publishMode_) throw Error("只读模式不能保存运行参数到设计");
             const auto prepared = editProject(project_,catalog_,op,args); auto changes = args.value("changes").toMap();
             QVariantMap normalized;
             for (const auto &entry : prepared.project.value("nodes").toList()) if (entry.toMap().value("id") == id) normalized = entry.toMap();
             const auto checked = normalized.value("config").toMap(); for (auto i = changes.begin(); i != changes.end(); ++i) i.value() = checked.value(i.key());
-            return launchEngine(op,{{"node",id},{"design",normalized},{"changes",changes},{"resources",prepared.project.value("resources")}},[this,id,persist](const QVariant &result, const QString &error) {
+            return launchEngine(op,{{"node",id},{"design",normalized},{"changes",changes},{"resources",prepared.project.value("resources")}},[this,id,persist,changes](const QVariant &result, const QString &error) {
                 if (!error.isEmpty()) return;
                 const auto config = result.toMap().value("config");
-                if (persist) { auto next = project_; auto nodes = next.value("nodes").toList(); for (auto &entry : nodes) { auto item = entry.toMap(); if (item.value("id") == id) { item["config"] = config; entry = item; } } next["nodes"] = nodes; next["resources"] = result.toMap().value("__resources"); undo_.append(project_); redo_.clear(); adopt(next,true,id); }
+                if (!persist) return;
+                auto next = project_; auto nodes = next.value("nodes").toList();
+                for (auto &entry : nodes) { auto item = entry.toMap(); if (item.value("id") == id) { item["config"] = config; entry = item; } }
+                next["nodes"] = nodes; next["resources"] = result.toMap().value("__resources");
+                if (publishMode_) {
+                    // Published applications never mark the snapshot dirty: explicit
+                    // parameter changes go to the user overlay and the in-memory copy.
+                    for (auto i = changes.cbegin(); i != changes.cend(); ++i) params_->setNode(id,i.key(),i.value());
+                    params_->scheduleSave(); project_ = next; emit projectChanged(); return;
+                }
+                undo_.append(project_); redo_.clear(); adopt(next,true,id);
             });
         }
         requireEditable(); return commit(editProject(project_,catalog_,op,args),"节点参数已更新");
@@ -478,13 +758,33 @@ QVariant Controller::command(const QString &op, const QVariantMap &args)
     }
     if (op.startsWith("workspace.") || op.startsWith("window.")) {
         if (!workspaces_) throw Error("工作区尚未建立"); const auto page = args.value("page").toString();
-        if (op == "workspace.open") return workspaces_->open(page,args.value("window").toString());
+        if (op == "workspace.open") return workspaces_->open(page,args.value("window").toString(),args.value("activate",false).toBool());
         if (op == "workspace.close") return workspaces_->closePage(page,args.value("discard").toBool());
         if (op == "workspace.detach") return workspaces_->detach(page,{args.value("x").toInt(),args.value("y").toInt()});
         if (op == "workspace.move") return workspaces_->movePage(page,args.value("window").toString(),args.value("index",-1).toInt());
         if (op == "window.pin") return workspaces_->pinWindow(args.value("window").toString(),args.value("enabled").toBool());
         return QVariantMap{{"closed",workspaces_->closeWindow(args.value("window").toString(),args.value("discard").toBool())}};
     }
+    if (op == "publish.start") {
+        if (publishMode_) throw Error("发布运行模式不能再次导出软件");
+        const auto started = startSoftwareExport(args);
+        if (started.contains("error")) throw Error(started.value("error").toString());
+        return started;
+    }
+    if (op == "publish.state") {
+        auto result = softwareExport_;
+        if (!softwareExportJobId_.isEmpty()) result[QStringLiteral("job_state")] = jobs_.value(softwareExportJobId_).value(QStringLiteral("state"));
+        if (result.isEmpty()) result = QVariantMap{{QStringLiteral("state"),QStringLiteral("idle")}};
+        return result;
+    }
+    if (op == "publish.cancel") {
+        const auto requested = args.value("job").toString();
+        if (!softwareExportProcess_) throw Error("没有正在进行的发布任务");
+        if (!requested.isEmpty() && requested != softwareExportJobId_) throw Error("发布任务不匹配：" + requested);
+        cancelSoftwareExport();
+        return QVariantMap{{QStringLiteral("job"),softwareExportJobId_},{QStringLiteral("state"),QStringLiteral("cancelling")}};
+    }
+    if (op == "publish.log") return publishLog();
     if (op == "capture") return capture(args);
     if (op.startsWith("controls.")) return controls(op,args);
     if (op == "view.actions") return viewActions(args.value("node").toString(),args.value("view").toString());
@@ -585,24 +885,205 @@ QVariant Controller::viewCall(const QVariantMap &args)
     return launchEngine("node.action",{{"node",node},{"action",action},{"args",arguments}});
 }
 
-QVariant Controller::capture(const QVariantMap &args)
+QVariantMap Controller::capture(const QVariantMap &args)
 {
     if (!workspaces_) throw Error("界面尚未打开");
     const auto target = args.value("target","window").toString();
-    QQuickItem *item = nullptr;
-    if (target == "window") { const auto windows = workspaces_->nativeWindows(); if (!windows.isEmpty()) item = windows.first()->contentItem(); }
-    else if (target.startsWith("view.")) { const auto key = target.mid(5); const auto separator = key.lastIndexOf('.'); for (const auto &candidate : viewItems_.value(key.left(separator) + "/" + key.mid(separator + 1))) if (candidate && candidate->property("visible").toBool()) { item = qobject_cast<QQuickItem *>(candidate); break; } }
-    else { workspaces_->open(target); item = workspaces_->page(target); }
-    if (!item || !item->window()) throw Error("截图目标尚未显示");
-    if (!item->window()->isExposed()) throw Error("请先显示并恢复目标窗口，再获取截图");
-    const auto size = QSize(args.value("width",item->width()).toInt(),args.value("height",item->height()).toInt());
-    if (size.width() < 1 || size.height() < 1 || size.width() > 8192 || size.height() > 8192) throw Error("截图尺寸需要在 1～8192 之间");
+    if (target.isEmpty()) throw Error("截图目标不能为空");
+    const auto requested = QSize(args.value("width",0).toInt(),args.value("height",0).toInt());
+    if ((requested.width() && (requested.width() < 1 || requested.width() > 8192)) ||
+        (requested.height() && (requested.height() < 1 || requested.height() > 8192)))
+        throw Error("截图尺寸需要在 1～8192 之间");
+    const auto dependency = args.value("job").toString();
+    if (!dependency.isEmpty() && !jobs_.contains(dependency)) throw Error("前置任务不存在：" + dependency);
     auto path = args.value("path").toString(); if (QUrl(path).isLocalFile()) path = QUrl(path).toLocalFile();
     if (path.isEmpty()) { QDir().mkpath(dataDirectory_ + "/captures"); path = dataDirectory_ + "/captures/" + newId(target) + ".png"; }
-    const auto grab = item->grabToImage(size); if (!grab) throw Error("无法启动内部截图");
-    const auto id = newId("job"); jobs_[id] = {{"id",id},{"op","capture"},{"state","running"}};
-    connect(grab.data(),&QQuickItemGrabResult::ready,this,[this,grab,id,path] { const bool saved = grab->saveToFile(path); finishJob(id,QVariantMap{{"path",path},{"width",grab->image().width()},{"height",grab->image().height()}},saved ? QString{} : "截图保存失败"); });
-    item->window()->update(); return QVariantMap{{"job",id},{"state","running"}};
+    const auto parent = QFileInfo(path).absolutePath();
+    if (!QDir().mkpath(parent)) throw Error("无法创建截图目录：" + parent);
+
+    const auto id = newId("job");
+    auto state = QSharedPointer<CaptureState>::create();
+    state->arguments = args;
+    state->target = target;
+    state->path = path;
+    state->requested = requested;
+    state->requestObservation = QVariantMap{{"batch",runtime_.value("batch")},{"epoch",runtime_.value("epoch")}};
+    jobs_[id] = {{"id",id},{"op","capture"},{"state","running"}};
+    captures_.insert(id,state);
+
+    state->deadline = new QTimer(this);
+    state->deadline->setSingleShot(true);
+    connect(state->deadline,&QTimer::timeout,this,[this,id] {
+        finishCapture(id,{},QStringLiteral("截图超时（30 秒）"));
+    });
+    state->deadline->start(30000);
+
+    startCapture(id);
+    const auto current = jobs_.value(id);
+    return QVariantMap{{"job",id},{"state",current.value("state")},{"error",current.value("error")}};
 }
+
+void Controller::startCapture(const QString &id)
+{
+    auto state = captures_.value(id); if (!state || state->done) return;
+    const auto dependency = state->arguments.value("job").toString();
+    if (dependency.isEmpty()) { captureStep(id); return; }
+    const auto dependencyJob = jobs_.value(dependency);
+    const auto dependencyState = dependencyJob.value("state").toString();
+    if (dependencyState == "failed" || dependencyState == "cancelled" || dependencyState == "missing") {
+        finishCapture(id,{},QStringLiteral("前置任务未完成：") + dependencyJob.value("error").toString());
+        return;
+    }
+    if (dependencyState == "complete") { state->arguments.remove("job"); captureStep(id); return; }
+    if (dependencyState != "running") { finishCapture(id,{},QStringLiteral("前置任务状态未知：")); return; }
+    // Waiting for a prior business task is one asynchronous step; the same
+    // deadline covers it and the subsequent page load/render.
+    state->dependency = connect(this,&Controller::jobFinished,this,[this,id,dependency](const QString &finished) {
+        if (finished != dependency) return;
+        auto current = captures_.value(id); if (!current || current->done) return;
+        disconnect(current->dependency); current->dependency = {};
+        const auto result = jobs_.value(dependency);
+        if (result.value("state").toString() != "complete") {
+            finishCapture(id,{},QStringLiteral("前置任务失败：") + result.value("error").toString());
+            return;
+        }
+        current->arguments.remove("job");
+        captureStep(id);
+    });
+}
+
+void Controller::captureStep(const QString &id)
+{
+    auto state = captures_.value(id); if (!state || state->done) return;
+    if (jobs_.value(id).value("state").toString() != "running") return;
+    const auto retry = [this,id] {
+        auto current = captures_.value(id);
+        if (current && !current->done)
+            QTimer::singleShot(16,this,[this,id] { captureStep(id); });
+    };
+
+    const auto target = state->target;
+    QQuickItem *item = nullptr;
+    QQuickWindow *window = nullptr;
+    if (target == "window") {
+        const auto requestedWindow = state->arguments.value("window").toString();
+        if (!requestedWindow.isEmpty()) {
+            window = workspaces_->window(requestedWindow);
+            if (!window) { finishCapture(id,{},QStringLiteral("窗口不存在：") + requestedWindow); return; }
+        } else {
+            const auto windows = workspaces_->nativeWindows();
+            if (windows.isEmpty()) { retry(); return; }
+            window = windows.first();
+        }
+        if (window) item = window->contentItem();
+    } else if (target.startsWith("view.")) {
+        const auto key = target.mid(5);
+        const auto separator = key.lastIndexOf('.');
+        if (separator < 0) { finishCapture(id,{},QStringLiteral("截图视图目标不合法：")); return; }
+        const auto viewKey = key.left(separator) + "/" + key.mid(separator + 1);
+        for (const auto &candidate : viewItems_.value(viewKey))
+            if (candidate && candidate->property("visible").toBool()) { item = qobject_cast<QQuickItem *>(candidate); break; }
+        if (!item) { retry(); return; }
+        window = item->window();
+    } else {
+        if (!state->opened) {
+            QVariantMap opened;
+            try { opened = workspaces_->open(target,{},false); }
+            catch (const std::exception &error) {
+                finishCapture(id,{},QString::fromUtf8(error.what()));
+                return;
+            }
+            if (opened.contains("drafts") || opened.value("requires_draft_resolution").toBool()) {
+                finishCapture(id,{},QStringLiteral("截图目标有未处理的草稿"));
+                return;
+            }
+            state->opened = true;
+            // The page is created now, but its QML tree needs one event-loop
+            // turn to install. Do not call processEvents while pointers are live.
+            QTimer::singleShot(0,this,[this,id] { captureStep(id); });
+            return;
+        }
+        item = workspaces_->page(target);
+        if (!item) { retry(); return; }
+        window = item->window();
+        if (!window) { retry(); return; }
+        if (!state->pageTurn) {
+            state->pageTurn = true;
+            QTimer::singleShot(0,this,[this,id] { captureStep(id); });
+            return;
+        }
+    }
+    if (!item || !window) { retry(); return; }
+
+    // Revalidate ownership after every event-loop turn. A window can close or a
+    // project switch can delete the page while a capture is pending.
+    state->window = window;
+    state->item = item;
+    const auto windowId = window->property("hostId").toString();
+    const auto metadata = [this,state](const QImage &image, const QString &id) {
+        const auto completion = QVariantMap{{"batch",runtime_.value("batch")},{"epoch",runtime_.value("epoch")}};
+        return QVariantMap{
+            {"target",state->target},{"window",id},{"path",state->path},
+            {"width",image.width()},{"height",image.height()},
+            {"captured_at",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)},
+            {"observation",state->requestObservation},
+            {"observation_scope","request"},
+            {"request_observation",state->requestObservation},
+            {"completion_observation",completion},
+            {"batch_associated",false},
+            {"single_batch",false}
+        };
+    };
+
+    if (!window->isExposed()) {
+        auto image = window->grabWindow();
+        if (image.isNull()) { finishCapture(id,{},QStringLiteral("窗口最小化且无法生成最新画面")); return; }
+        if (target != "window") {
+            const auto dpr = window->devicePixelRatio();
+            const auto scene = item->mapRectToScene(item->boundingRect());
+            const auto rect = QRect(qRound(scene.x() * dpr),qRound(scene.y() * dpr),
+                                    qRound(scene.width() * dpr),qRound(scene.height() * dpr)).intersected(image.rect());
+            if (rect.isEmpty()) { finishCapture(id,{},QStringLiteral("截图目标没有可渲染区域")); return; }
+            image = image.copy(rect);
+        }
+        if (!state->requested.isEmpty()) image = image.scaled(state->requested,Qt::IgnoreAspectRatio,Qt::SmoothTransformation);
+        if (!image.save(state->path)) { finishCapture(id,{},QStringLiteral("截图保存失败")); return; }
+        finishCapture(id,metadata(image,windowId),{});
+        return;
+    }
+
+    const auto size = !state->requested.isEmpty() ? state->requested : QSize(item->width(),item->height());
+    if (size.width() < 1 || size.height() < 1) { finishCapture(id,{},QStringLiteral("截图尺寸需要在 1～8192 之间")); return; }
+    const auto grab = item->grabToImage(size);
+    if (!grab) { finishCapture(id,{},QStringLiteral("无法启动内部截图")); return; }
+    state->grab = grab;
+    state->ready = connect(grab.data(),&QQuickItemGrabResult::ready,this,[this,id,metadata] {
+        auto current = captures_.value(id); if (!current || current->done || !current->grab) return;
+        const auto image = current->grab->image();
+        if (image.isNull()) { finishCapture(id,{},QStringLiteral("截图结果为空")); return; }
+        const auto window = current->window;
+        if (!window) { finishCapture(id,{},QStringLiteral("截图窗口已关闭")); return; }
+        const auto saved = current->grab->saveToFile(current->path);
+        finishCapture(id,metadata(image,window->property("hostId").toString()),saved ? QString{} : QStringLiteral("截图保存失败"));
+    });
+    state->destroyed = connect(grab.data(),&QObject::destroyed,this,[this,id] {
+        finishCapture(id,{},QStringLiteral("截图目标已关闭"));
+    });
+    window->update();
+}
+
+void Controller::finishCapture(const QString &id, const QVariant &result, const QString &error)
+{
+    auto state = captures_.take(id);
+    if (!state || state->done) return;
+    state->done = true;
+    if (state->deadline) { state->deadline->stop(); state->deadline->deleteLater(); state->deadline = nullptr; }
+    if (state->dependency) { disconnect(state->dependency); state->dependency = {}; }
+    if (state->ready) { disconnect(state->ready); state->ready = {}; }
+    if (state->destroyed) { disconnect(state->destroyed); state->destroyed = {}; }
+    state->grab.clear();
+    if (jobs_.contains(id)) finishJob(id,result,error);
+}
+
 
 } // namespace corig

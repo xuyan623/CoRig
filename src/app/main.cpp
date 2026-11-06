@@ -4,6 +4,7 @@
 #include "quick/renderers.h"
 #include "quick/icon_provider.h"
 #include "core/paths.h"
+#include "core/run_mode.h"
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
@@ -39,7 +40,13 @@ static void messageHandler(QtMsgType type, const QMessageLogContext &, const QSt
 
 namespace {
 
-QString crashDirectory() { return QCoreApplication::applicationDirPath() + "/cache/logs"; }
+// Resolved before QGuiApplication exists, so a crash during startup still lands
+// in the directory owned by the current mode (the editor keeps <exe>/cache/logs).
+QString crashDirectory()
+{
+    const auto &options = corig::runOptions();
+    return options.crashRoot.isEmpty() ? QCoreApplication::applicationDirPath() + "/cache/logs" : options.crashRoot;
+}
 
 QString crashPath(const QString &suffix)
 {
@@ -96,7 +103,9 @@ LONG WINAPI crashFilter(EXCEPTION_POINTERS *information)
     const auto owner = addressOwner(address); if (!owner.isEmpty()) detail += " (" + owner + ")";
     const auto dump = writeMiniDump(information); if (!dump.isEmpty()) detail += "\n转储文件：" + dump;
     appendCrashRecord("crash",detail);
-    const auto message = detail + "\n\n诊断信息已写入程序目录的 cache/logs。";
+    const auto location = corig::runOptions().mode == corig::RunMode::Publish
+        ? QStringLiteral("应用诊断目录") : QStringLiteral("程序目录的 cache/logs");
+    const auto message = detail + "\n\n诊断信息已写入" + location + "。";
     MessageBoxW(nullptr,reinterpret_cast<LPCWSTR>(message.utf16()),L"CoRig 遇到严重错误",MB_OK | MB_ICONERROR);
     return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -125,6 +134,20 @@ void installCrashHandlers()
 
 int main(int argc, char **argv)
 {
+    // The mode is decided from the payload manifest, never from argv, and it must be
+    // known before any path-sensitive work starts. A payload that claims to be a
+    // CoRig application but fails validation stops startup instead of silently
+    // degrading into an editor session.
+    corig::RunModeError modeError;
+    if (!corig::initializeRunOptions(&modeError)) {
+        const auto message = QStringLiteral("应用载荷不完整（%1）：%2").arg(modeError.code, modeError.message);
+#ifdef Q_OS_WIN
+        MessageBoxW(nullptr, reinterpret_cast<LPCWSTR>(message.utf16()), L"CoRig 无法启动", MB_OK | MB_ICONERROR);
+#else
+        std::fprintf(stderr, "%s\n", message.toUtf8().constData());
+#endif
+        return 1;
+    }
     try { corig::configureRuntimePaths(); }
     catch (const std::exception &error) {
 #ifdef Q_OS_WIN
@@ -136,7 +159,7 @@ int main(int argc, char **argv)
         return 1;
     }
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
-    QGuiApplication application(argc,argv); QCoreApplication::setOrganizationName("CoRig"); QCoreApplication::setApplicationName("CoRig"); QCoreApplication::setApplicationVersion("0.4.3");
+    QGuiApplication application(argc,argv); QCoreApplication::setOrganizationName("CoRig"); QCoreApplication::setApplicationName("CoRig"); QCoreApplication::setApplicationVersion("0.4.4");
     application.setApplicationDisplayName(QStringLiteral("联调 · CoRig"));
     application.setQuitOnLastWindowClosed(false);
     QCommandLineParser parser; parser.setApplicationDescription("联调 · CoRig 工程调试工作台"); parser.addHelpOption(); parser.addVersionOption();
@@ -145,19 +168,29 @@ int main(int argc, char **argv)
     parser.addOption({"update-installer","打开此安装目录的更新工具"});
     parser.addOption({"configure-installer","配置此安装目录的更新缓存后退出"});
     parser.addPositionalArgument("project","启动后打开的新版工程文件（不会自动运行）"); parser.process(application);
-    if (parser.isSet("configure-installer")) return 0;
-    if (parser.isSet("update-installer")) {
+    // Maintenance flags belong to the editor installation; a published payload
+    // has no installer and must ignore them.
+    const auto publishing = corig::runOptions().mode == corig::RunMode::Publish;
+    if (!publishing && parser.isSet("configure-installer")) return 0;
+    if (!publishing && parser.isSet("update-installer")) {
         const auto root = QCoreApplication::applicationDirPath();
         const auto tool = root + "/CoRigMaintenanceTool.exe";
         return QFileInfo::exists(tool) && QProcess::startDetached(tool,
             {"--cache-path", root + "/cache/installer", "--start-updater"}) ? 0 : 1;
     }
-    const auto directory = QDir(parser.value("data-dir")).absolutePath();
+    const auto &options = corig::runOptions();
+    // A published application always uses its own data root: --data-dir stays an
+    // editor and debugging option, so a shortcut cannot redirect user data.
+    const auto directory = options.mode == corig::RunMode::Publish
+        ? options.dataRoot : QDir(parser.value("data-dir")).absolutePath();
     try {
         // Data lives with the program; create the three user-facing folders once so
         // an empty project folder is explained instead of silently missing.
-        corig::ensureDataDirectory(directory);
-        logPath = QCoreApplication::applicationDirPath() + "/cache/logs/native.log"; qInstallMessageHandler(messageHandler);
+        corig::ensureDataDirectory(directory, options.mode);
+        // A published application writes no file log: the payload is read-only and
+        // diagnostics belong to its data root. Stderr output is kept in both modes.
+        if (options.mode == corig::RunMode::Editor) logPath = QCoreApplication::applicationDirPath() + "/cache/logs/native.log";
+        qInstallMessageHandler(messageHandler);
         installCrashHandlers();
         // Startup breadcrumbs name the stage that was reached last, so a process
         // that dies before the window appears still tells where it stopped.
@@ -176,15 +209,24 @@ int main(int argc, char **argv)
         if (!projects.isEmpty() && !choices.isEmpty()) { initialCatalog = corig::loadProject(projects.first()); initialCatalog["plugin_selections"] = choices; }
         qInfo("启动：工程 %s，插件选择 %lld 项",projects.isEmpty() ? "(无)" : qUtf8Printable(projects.first()),static_cast<qlonglong>(choices.size()));
         corig::Controller controller(directory,nullptr,initialCatalog); QQmlApplicationEngine qml;
+        if (publishing) {
+            try { controller.loadPublishedProject(corig::runOptions().payloadRoot + "/project/runtime.crpj"); }
+            catch (const std::exception &error) {
+                const auto message = QStringLiteral("应用载荷不完整：%1").arg(QString::fromUtf8(error.what()));
+                qCritical("%s",qUtf8Printable(message));
+                MessageBoxW(nullptr,reinterpret_cast<LPCWSTR>(message.utf16()),L"CoRig 无法启动",MB_OK | MB_ICONERROR);
+                return 2;
+            }
+        }
         qml.addImageProvider("icons",new corig::IconProvider);
         QObject::connect(&application,&QCoreApplication::aboutToQuit,&controller,&corig::Controller::shutdown);
         controller.attachUi(&qml);
         qInfo("启动：界面已加载");
-        if (!projects.isEmpty()) {
+        if (!publishing && !projects.isEmpty()) {
             if (projects.first().endsWith(".crpl",Qt::CaseInsensitive)) controller.invoke("plugin.import",{{"path",projects.first()}});
             else controller.invoke("project.open",{{"path",projects.first()},{"plugin_selections",choices}});
         }
-        const auto result = application.exec(); qInfo("启动：事件循环结束，退出码 %d",result); controller.shutdown(); return result;
+        const auto result = application.exec(); qInfo("启动：事件循环结束，退出码 %d",result); controller.shutdown(); corig::cleanupRuntimeTemp(); return result;
     } catch (const std::exception &error) {
         qCritical("%s",error.what());
 #ifdef Q_OS_WIN

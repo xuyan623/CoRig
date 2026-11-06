@@ -33,3 +33,30 @@ _Avoid_：将所有暂停状态都称为调试
 
 **通断开关**：控制一路逻辑连接是否存在；关闭后下游按未连接输入处理。
 _Avoid_：仅停止发送但保留旧输入值
+
+**工作根**：发布应用在 exe 旁默认唯一自动写入的目录 `<exe 主文件名>.data`，含 `data/`（设置、参数、实例记录、截图、诊断）与 `cache/`（qml、shaders、temp、plugin-packages、payloads）；用户显式指定的截图、日志导出路径除外。
+_Avoid_：数据目录、安装目录、%LOCALAPPDATA%
+
+**发布运行模式**：进程由运行载荷启动、工作根固定、工程只读、命令白名单受限的运行方式（mode=publish）。
+_Avoid_：发布模式（无定语）、独立应用运行模式、运行模式
+
+**运行载荷**：由载荷清单、载荷索引、runtime/、project/、licenses/ 组成的自包含目录；单 exe 运行时由启动器解包到 `<工作根>/cache/payloads/<载荷 ID>`。
+_Avoid_：安装包、便携包、程序目录
+
+**载荷清单**：`manifest.json`，记录应用身份、版本、工程快照哈希与留存开关，决定运行时模式。
+_Avoid_：索引、文件清单、install-manifest
+
+**载荷索引**：`payload-index.json`，目录载荷的逐文件 path/size/sha256；单 exe 内的二进制索引另称“容器索引”。
+_Avoid_：清单、载荷清单
+
+**容器索引**：单 exe 尾部的二进制索引，记录每个文件的路径、大小、偏移与 SHA-256，与 64 字节 trailer 一起定位载荷。
+_Avoid_：载荷索引、manifest
+
+**实例记录**：`<工作根>/data/.sessions/instances/api-<pid>-<端口>.json`，每进程一条；`api.json` 是最近一次启动的别名。
+_Avoid_：把 api.json 等同于实例记录、连接配置
+
+**Python 依赖闭包**：发布时由 `python/collect.py` 按插件 `python` 声明解析、从发布机已安装环境复制到 `<运行载荷>/python` 的解释器与分发集合；不联网、不调用 pip。
+_Avoid_：pip 安装、虚拟环境、系统解释器
+
+**留存开关**：发布选项 `--retain-original`，只记录“允许导出原始工程”的能力标志，不额外复制工程。
+_Avoid_：备份、快照、加密开关

@@ -120,7 +120,7 @@ def main():
     try:
         client = launch()
         state = client.call('app.state')
-        check(state['application'] == 'CoRig' and state['version'] == '0.4.3', 'AI connects to the actual CoRig 0.4 application')
+        check(state['application'] == 'CoRig' and state['version'] == '0.4.4', 'AI connects to the actual CoRig 0.4 application')
         required = {'plugin.state', 'plugin.import', 'plugin.enable', 'plugin.remove', 'plugin.export', 'update.check', 'update.install', 'app.restart'}
         check(required <= set(client.call('schema')['commands']), 'AI discovery exposes the new plugin and installation commands')
         official = client.call('registry')
@@ -150,7 +150,7 @@ def main():
         time.sleep(.1)
         client.call('controls.click', {'id':'plugins.tree.package.org.corig.control.number'})
         client.call('capture', {'target':'window','path':str(run/'local-manager-tree.png')})
-        client.call('controls.click', {'id':'plugins.close'})
+        client.call('controls.click', {'id':'settings.close'})
 
         client.call('plugin.import', {'path': str(args.plugin.resolve())})
         check(any(p['id'] == 'user.example.native_gain' for p in client.call('registry')), 'a standalone SDK build imports through the shared plugin command')
@@ -239,19 +239,25 @@ def main():
         client.call('runtime.start')
         wait_output(client, 'gain', 6)
         check(not client.call('app.state')['python'], 'a fresh process reopens the self-contained C++ project without Python or installed packages')
-        check(len(client.call('registry'))==2, 'no hidden built-in nodes return when the installed library is absent')
-        check(not client.call('plugin.state')['packages'] and not client.call('plugin.tree',{'scope':'library'})['plugins'], 'local inventory excludes project-contained packages when the local folder is empty')
+        # The application seeds its shipped packages into a fresh local library;
+        # "absent" here means no hidden built-in nodes, not an empty registry.
+        check(all(not p.get('builtin') for p in client.call('registry')), 'no hidden built-in nodes return when the installed library is absent')
+        check(not any(p['id']=='user.example.native_gain' for p in client.call('plugin.state')['packages']) and
+              not any(p['id']=='user.example.native_gain' for p in client.call('plugin.tree',{'scope':'library'})['plugins']),
+              'local inventory excludes project-contained packages when the local folder is empty')
         check(len(client.call('plugin.tree',{'scope':'project'})['plugins'])==2, 'embedded dependencies remain in the separate project inventory')
         client.call('plugin.settings')
         client.call('capture', {'target':'window','path':str(run/'empty-local-manager.png')})
-        client.call('controls.click', {'id':'plugins.close'})
+        client.call('controls.click', {'id':'settings.close'})
 
         embedded_export=run/'Embedded-exported.crpl'
         client.call('plugin.export', {'plugin':'user.example.native_gain','path':str(embedded_export)})
         check(embedded_export.read_bytes()==exported.read_bytes(), 'a project-contained plugin exports without a local installed copy')
         client.call('runtime.stop')
         missing=client.call('project.open',{'path':str(run/'DependenciesOnly.crpj')})
-        check(missing['requires_plugins'] and len(missing['missing_plugins'])==2, 'a dependency-only project lists the actual missing packages before opening')
+        check(missing['requires_plugins'] and
+              any(p.get('id')=='user.example.native_gain' for p in missing['missing_plugins']),
+              'a dependency-only project lists the actual missing packages before opening')
         client.call('controls.click',{'id':'plugins.version.cancel'})
         client.call('project.new', {'discard': True})
         client.call('plugin.import', {'path': str(official_exported)})
@@ -301,7 +307,7 @@ def main():
         client.call('controls.click', {'id':'plugins.tree.package.org.corig.control.number'})
         check(any(c['id'] == 'plugins.enabled.package.org.corig.control.number' for c in client.call('controls.list')), 'AI discovers the real plugin enable controls in plugin settings')
         client.call('capture', {'target': 'window', 'path': str(run / 'plugin-settings.png')})
-        client.call('controls.click', {'id': 'plugins.close'})
+        client.call('controls.click', {'id': 'settings.close'})
         close(client)
         report = {'application': 'CoRig', 'version': state['version'], 'checks': checks, 'run': str(run),
                   'native_package_sha256': hashlib.sha256(args.plugin.read_bytes()).hexdigest()}

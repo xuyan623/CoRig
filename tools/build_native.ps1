@@ -2,7 +2,9 @@ param(
     [string]$QtPrefix = 'D:\Software\DevTools\Qt\6.12.0\msvc2022_64',
     [string]$Configuration = 'Release',
     [switch]$Test,
-    [switch]$CoreOnly
+    [switch]$CoreOnly,
+    # Independent build trees keep parallel agents from reconfiguring one another.
+    [string]$BuildPath = 'build\native'
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -19,7 +21,7 @@ foreach ($entry in $compilerEnvironment) {
     if ($entry -match '^([^=][^=]*)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process') }
 }
 $env:PATH = "$QtPrefix\bin;$ninjaDir;$env:PATH"
-$buildPath = Join-Path $repoRoot 'build\native'
+$buildPath = if ([System.IO.Path]::IsPathRooted($BuildPath)) { $BuildPath } else { Join-Path $repoRoot $BuildPath }
 $buildApplication = if ($CoreOnly) { 'OFF' } else { 'ON' }
 & cmake -S $repoRoot -B $buildPath -G Ninja "-DCMAKE_BUILD_TYPE=$Configuration" "-DCMAKE_PREFIX_PATH=$QtPrefix" "-DCORIG_BUILD_APP=$buildApplication"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

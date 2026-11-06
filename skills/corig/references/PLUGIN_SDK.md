@@ -1,6 +1,6 @@
 # CoRig 插件开发
 
-官方和用户插件统一使用 `.crpl` 插件包；C++、Python 和纯 QML 扩展共用导入、查询、启停、工程携带和导出流程。本文对应 CoRig 0.4.1 / C++ SDK 2。SDK 1 的 C++ 插件需要重新编译；Python v3 声明继续支持。
+官方和用户插件统一使用 `.crpl` 插件包；C++、Python 和纯 QML 扩展共用导入、查询、启停、工程携带和导出流程。本文对应 CoRig 0.4.4 / C++ SDK 2。SDK 1 的 C++ 插件需要重新编译；Python v3 声明继续支持。
 
 ## 统一插件包
 
@@ -60,7 +60,29 @@ Node 的计算和生命周期方法在引擎线程调用。同步发布使用 ho
 
 ## 环境
 
-在设置中选定本机 Python 3.10+，或调用 `preferences.set` 的 `python` 绝对路径。`python.probe` 可检查 `dependencies` 模块列表。软件不安装解释器或依赖；缺少依赖会显示模块名。只运行官方节点时不启动 Python。
+编辑器在设置中选定本机 Python 3.10+，或调用 `preferences.set` 的 `python` 绝对路径。`python.probe` 可检查 `dependencies` 模块列表。软件不安装解释器或依赖；缺少依赖会显示模块名。只运行官方节点时不启动 Python。发布运行模式不允许修改该设置。发布器可把基础解释器与依赖闭包写进载荷；发布应用从载荷内 `python/python.exe` 运行 Python 插件（`loadPublishedProject` 设置该环境，worker 用 `-I`），不读取本机设置、不回退系统解释器。`python.probe` 在发布模式被拒。见[发布应用验证](VERIFICATION_PUBLISH.md) B 组。
+
+## Python 声明与发布依赖
+
+发布含 Python 插件的工程时，必须用 `--python-exe` 指定一台装好依赖的本机解释器；发布器只从该环境复制，不联网、不调用 pip、不创建虚拟环境。依赖在插件包级或单个插件级用 `python` 对象声明，两级合并后生效：
+
+```json
+"python": {
+  "distributions": {"paramiko": "paramiko", "serial": "pyserial"},
+  "requires": {"numpy": ">=1.26,<3"},
+  "extras": {"paramiko": ["ed25519"]}
+}
+```
+
+- `distributions`：导入名到分发名。导入名与分发名不同时必须显式写出；显式值优先于采集解释器里的包元数据。只写 `requires` 而不写导入名，适用于两者同名的常见情况。
+- `requires`：分发名到版本约束（`packaging` 语法，如 `>=1.2,<2`）；纯数字按 `==数字` 处理。约束在采集阶段用已安装版本校验。
+- `extras`：分发名到 extra 列表，按需展开该分发的附加依赖。
+- 采集器 `python/collect.py` 从声明出发，按已安装分发的 `Requires-Dist` 解析完整闭包，并用采集解释器本身求值环境标记；缺分发或导入名无法解析报 `PY_DECL_UNRESOLVED`，约束不满足报 `PY_CONFLICT`，格式错误报 `PY_DECL_INVALID`，均为发布失败，不会静默择一。
+- 基础 CPython 运行时复制到 `<载荷>/python`，第三方分发按 `RECORD` 复制；`python-runtime.json` 记录解释器版本、模块到分发映射、分发文件数与字节数，发布报告的 `python.summary`、`python.checks` 与顶层 `warnings` 给出闭包与自检结果。
+- 采集解释器与基础运行时版本不一致时记录警告（例如 3.12 解释器配 3.11 标准库），不会替换或下载另一版本；发布前应保持二者一致。
+- 运行期只使用载荷内解释器、不读取编辑器设置、不回退系统解释器；`loadPublishedProject` 在载荷含解释器时把它交给运行时（worker 用 `-I`），模块来源越出载荷会被自检拒绝（`PY_PROBE_FAILED`）。
+
+`dependencies` 列表只供编辑器加载前检查，不参与上述闭包；同一插件若要被发布，需补 `python` 声明。
 
 ## 运行示例
 
@@ -107,7 +129,7 @@ def process(inputs, state):
 
 - `plugin_api=3`、id、name、code/code_file 必填；ID 不可覆盖官方或已有插件。
 - properties 描述 string、boolean、number、integer、json、object、array 类型、默认值、choices、min/max 等。嵌套数据也必须可保存，不能包含 NaN、无穷大或宿主对象。ports 显式声明方向和数据类型；一个端口只连接一条导线。
-- dependencies 是 Python 导入名列表。每次加载前检查；没有隐式 pip 安装。
+- dependencies 是 Python 导入名列表，编辑器在加载前检查；没有隐式 pip 安装。它不参与发布收集：发布依赖必须写进下述 `python` 声明，否则载荷只带基础解释器，运行期会因缺模块失败（当前已知边界）。
 - resource_files 将声明目录内的辅助文件加入资源，resources 可直接提供文本或 bytes。Python 可用 `from .helper import ...`；文件在独立包中展开。禁止越出资源目录。
 - source_interval_ms 可让插件作为自主信号源；普通插件由上游输入更新触发。
 - actions 的每项描述 args、可选 requires_paused；实现 `action_<名称>(inputs,state)`，从 inputs['args'] 读参数。动作同时收到当前端口输入、`inputs['__config__']` 和 `inputs['__context__']`，返回 `{'result':动作结果,'outputs':输出字典}`。

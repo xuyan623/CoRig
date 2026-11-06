@@ -2,22 +2,23 @@
 
 [项目首页](../README.md) · [使用手册](USER_GUIDE.md) · [构建与发布](BUILDING.md)
 
-本文件记录 CoRig 0.4.1 Windows x64 原生版本的验证范围。原生测试、扩展示例与安装更新验收于 2026-10-31 通过；性能表保留 2026-10-28 的原生版本基线，未作为本次版本的重新测量结果。
+本文件记录 CoRig 0.4.1 Windows x64 原生版本的历史验证范围，作为 0.4.4 的基线。原生测试、扩展示例与安装更新验收于 2026-10-31 通过；性能表保留 2026-10-28 的原生版本基线，未作为后续版本的重新测量结果。0.4.4 新增的发布应用能力另见[发布应用验证矩阵](VERIFICATION_PUBLISH.md)，其条目为待执行方法与状态标注，不并入本页的已通过结论。
 
 ## 测试与报告
 
 | 验证层次 | 已通过范围 | 便携包内的摘要 |
 |---|---|---|
-| 原生 CTest | 8 套：plugins、core、editor、workbench_ui、execution、control、recording、io | `verification/native.json` |
+| 原生 CTest | 8 套（0.4.1 基线）：plugins、core、editor、workbench_ui、execution、control、recording、io；0.4.4 构建另含 w1_publish、user_params、command_registry、describe，共 12 套，W3 已按发布矩阵 G1 重跑（12/12） | `verification/native.json`；W3 见 `build/w3-verify/report.md` |
 | 部署验收 | 27 项，包括三个官方示例、独立启动、CLI 发现、多实例和各专项验收入口 | `verification/release.json` |
 | 实际界面 | 26 项：布局、窗口、插件库、公共引擎、连线编辑及调试 | `verification/interface.json` |
 | 工作台 | 13 项：放置、同步、复制、属性隔离、保存重开与真实计算 | `verification/workbench.json` |
 | 仪表与扩展 | 18 项：精确采样、FFT、导出、姿态、Python/QML 及本机 SSH | `verification/instruments.json` |
 | 导线动画 | 7 项：速度/密度、间隙、暂停、继续、单步与结束 | `verification/animation.json` |
 | 录制回放 | 33 项：控制、保存、直通、截断、跳转、倍速和重置 | `verification/recording.json` |
-| AI 协作 | 122 个公开命令中 115 个真实调用成功；7 个需外部进程或第三方扩展的命令单独列出，由安装与示例专项覆盖 | `verification/ai.json` |
+| AI 协作 | 122 个公开命令中 115 个真实调用成功（0.4.1 基线计数）；7 个需外部进程或第三方扩展的命令单独列出，由安装与示例专项覆盖 | `verification/ai.json` |
 | 外部插件 | 38 项：独立 SDK、C++/Python 真实计算、目录分类、本地/工程分离、版本选择和导出 | `verification/plugins.json` |
 | 安装与更新 | 14 项：当前用户安装、真实维护工具、组件更新、重启、数据保留和卸载 | `verification/installer.json` |
+| 发布应用 | 46 条（A–H 组）方法与状态见[发布应用验证矩阵](VERIFICATION_PUBLISH.md)；W3 独立验收 13 用例、103/103 检查通过，D1 已验证 | W3 报告 `build/w3-verify/report.md` / `report.json` |
 
 报告路径以解压后的便携包根目录为准。部署验收包含对各专项驱动成功执行的检查，其计数不与专项场景直接相加。开发目录的原始记录位于 `verification/corig-packaged/` 等目录，属于本地验收产物。
 
@@ -39,11 +40,13 @@ Qt Quick 窗口事件测试覆盖囊泡取出/接回、点击母体归还、取�
 
 ## AI 接口与用户扩展
 
-本地 API 暴露 107 个公开命令。设计和插件验收通过真实 HTTP 成功调用 103 个命令，报告分别列出 covered_commands 和 missing_commands；app.restart、update.check、update.install 在独立安装验收中实际调用，plugin.directory 的系统文件夹打开操作未计入自动化命令覆盖。范围包括插件发现、端口兼容、批量编辑、同步、绑定、画布与侧栏、窗口、运行调试、真实数据、日志、内部截图、保存重开和退出。
+本地 API 在 0.4.1 基线暴露 107 个公开命令（该计数为历史基线，当前命令表以运行时 `schema` 为准）。设计和插件验收通过真实 HTTP 成功调用 103 个命令，报告分别列出 covered_commands 和 missing_commands；app.restart、update.check、update.install 在独立安装验收中实际调用，plugin.directory 的系统文件夹打开操作未计入自动化命令覆盖。范围包括插件发现、端口兼容、批量编辑、同步、绑定、画布与侧栏、窗口、运行调试、真实数据、日志、内部截图、保存重开和退出。
 
 独立 Python/QML 插件使用真实解释器、辅助文件相对导入与日志。未设置 `objectName` 的控件通过自动 handle 被发现；滑块、下拉框、SpinBox、中文文本提交和自绘鼠标操作均检查了实际 Python 状态与输出。原生 CLI 的 `--wait` 验证了控件触发的后台任务完成。
 
 命令覆盖表示每个公开命令至少完成一次成功调用，并结合关键拒绝和结果检查；不等于穷举每种参数或未来第三方插件。自动 handle 在对象销毁或视图重建后需要重新发现。
+
+发布运行模式的命令面另行验证：当前 `allow` 46 条、`deny` 86 条、`conditional` 2 条，拒绝文案与白名单分组见[从 AI 接入发布应用](AI_ACCESS.md)；矩阵 D1–D4、H9–H10 的执行证据与未覆盖项见[发布应用验证矩阵](VERIFICATION_PUBLISH.md)。
 
 ## 外部插件、本地目录与工程副本
 
@@ -75,7 +78,7 @@ Python 隔离测试还覆盖同包两个节点互不共享 state、日志归属�
 
 程序、CLI、窗口标题、文件属性、接口、工程与录制文件均使用 CoRig 标识。原生测试确认 `.crpj` 和 `.crrc` 保存与重开正常，旧产品文件即使修改后缀也会被拒绝；CLI 也拒绝缺少 CoRig 产品标识的旧连接记录。
 
-部署包检查确认不含 Python/PySide6 运行时，打开、重开及退出时无 QML 引用、类型或绑定循环错误。正式 Release 附带便携包、对应源码及 SHA-256 校验值。
+便携包（编辑器 ZIP，0.4.1 基线）检查确认不含 Python/PySide6 运行时；发布运行载荷的 Python 闭包另见[发布应用验证矩阵](VERIFICATION_PUBLISH.md) B 组。打开、重开及退出时无 QML 引用、类型或绑定循环错误。正式 Release 附带便携包、对应源码及 SHA-256 校验值。
 
 ## 性能基线
 
@@ -96,6 +99,7 @@ Python 隔离测试还覆盖同包两个节点互不共享 state、日志归属�
 - 物理串口电平、线缆、真实设备协议与持续吞吐。
 - 远端设备 SSH、真实串口自动重连和设备执行反馈。
 - 不同 Windows 机器、显卡驱动及长时间压力下的表现。
+- 发布应用在干净机、真断网、跨用户 ACL、杀毒软件、网络盘、签名与跨版本参数重放下的表现；这些边界在[发布应用验证矩阵](VERIFICATION_PUBLISH.md)中逐条列为未验证。
 
 SSH 联调使用仅监听本机的真实软件服务器，验证主机信任、密码认证、中文 ANSI 收发及 PTY 尺寸传递；这些结果不代替远端设备验证。软件回环、构建和截图也不代替上述实机结果。
 

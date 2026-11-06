@@ -56,23 +56,29 @@ runtime.pause 保留实验状态；runtime.stop 释放连接但保留当前参�
 {"op":"node.action","args":{"node":"plot","action":"read_data","args":{}}}
 ```
 
-view.read 省略 args 时使用界面当前范围；原始曲线用 read_data，频谱用 view.read 的 fft=true。view.actions 列出公开视图动作及其契约：每项含 action、description、requires_view 与 args；requires_view=true 的动作必须有已打开的视图实例，view.call 按同一张表把动作交给视图执行，其余动作落 node.action。view.call 支持范围、FFT、相机、恢复渲染默认与图片导出。姿态 geometry 动作可分页读取真实顶点/面；不以截图推断数值。
+view.read 省略 args 时使用界面当前范围；原始曲线用 read_data，频谱用 view.read 的 fft=true。view.actions 列出公开视图动作及其契约：每项含 action、description、requires_view 与 args；requires_view=true 的动作必须有已打开的视图实例，view.call 按同一张表把动作交给视图执行，其余动作落 node.action。view.call 支持范围、FFT、相机、恢复渲染默认与图片导出。plot.curves 的数据栏宽度属于视图外观：字段 panel_width（100～1200，默认 148），拖动分隔条结束时写入工程的 ui.view_properties，重开工程后恢复。姿态 geometry 动作可分页读取真实顶点/面；不以截图推断数值。
 
 `plot.xy` 固定 xy（object）、active、pressed（boolean）三个输入端口，视图快照为 state（xy、valid、active、pressed）与 config；xy 必须是恰好两个有限数值，active 未连接时视为 true。`plot.sixdof` 的端口随配置生成：position_x/y/z（number，单位取 position_unit），mode=quaternion 时 w/x/y/z，否则 roll/pitch/yaw（number，单位取 angle_unit）；status_inputs=true 时增加 connected、tracking_valid（boolean）与 reason（string）。view.read 返回 kind、mesh（模型摘要）、config、state 和 reset_token，state 含 matrix（3×3 行矩阵）、position_m、quaternion（wxyz）、valid、frozen、error、model 与 time；输入无效时移除 matrix、position_m 与 quaternion。sixdof 的 frozen=true 表示状态输入失效、画面保留最后有效位姿，不能当作实时数据；reset_token 变化表示节点重建，视图据此恢复相机默认值。相机用 view.call 的 camera（azimuth、elevation、distance、pan）、reset_camera、restore_defaults（恢复相机与渲染默认值，不修改已保存外观）与 export_image；camera_azimuth、camera_elevation、camera_distance_m 变化会重置相机，其余外观变更保留当前视角。模型几何用 node.action 的 geometry（component=vertices 或 triangles，offset、limit≤10000 分页）。两个视图的可视参数都属于视图外观（xy 的范围、形状、标题和颜色；sixdof 的相机、网格、坐标轴和投影），按 node/view 槽位保存在工程的 ui.view_properties，写入走 ui.view.appearance。
 
 `controls.list` 可按 page 筛选，发现已加载的具名及未命名 Qt Quick 对象。记录包含 id、handle、path、name、page、node、view、ui_item、visible、enabled、bounds、writable、actions 和可读值。显式 objectName 仍可用；每个实际对象还有自动 handle，在该对象存活期间保持不变，移动或兄弟排序不会将它指向另一对象。path 描述当前视觉层级，含页、QML id／类型及同级序号。视图重建或工程切换后重新发现；不要持久保存自动 handle。相同显式名称优先选择可见可用对象，使用 handle 可精确区分多份视图。
 
-`controls.get` 读取指定对象，包括支持控件的 pressed、down、hovered。`controls.set` 只接受其 writable 中的 text、editText、value、checked、currentIndex；滑块、SpinBox、下拉框和开关会触发实际用户操作回调。文本赋值后使用 `controls.commit` 按 Qt 的 Enter 提交规则执行校验与 accepted／editingFinished；`controls.focus`、`controls.click` 操作实际对象。公共引擎控件使用 execution.run/debug/batch/node/reset/end/source/status；execution.run 按运行状态切换运行／暂停，明确的引擎命令仍为 runtime.start 和 runtime.pause。
+`controls.get` 读取指定对象，包括支持控件的 pressed、down、hovered。`controls.set` 只接受其 writable 中的 text、editText、value、checked、currentIndex；滑块、SpinBox、下拉框和开关会触发实际用户操作回调。文本赋值后使用 `controls.commit` 按 Qt 的 Enter 提交规则执行校验与 accepted／editingFinished；`controls.focus`、`controls.click` 操作实际对象；对没有视觉项的 QQuickAction（例如文件菜单动作）会调用其 trigger()，菜单项和普通控件仍按点击处理。公共引擎控件使用 execution.run/debug/batch/node/reset/end/source/status；execution.run 按运行状态切换运行／暂停，明确的引擎命令仍为 runtime.start 和 runtime.pause。
 
 自绘或非标准 QML 控件可以使用 `controls.key` 和 `controls.pointer`，事件直接送入应用自身 Qt 窗口，不移动系统鼠标，也不发送操作系统键盘输入。key 使用 Qt 名称，如 Return、A；modifiers 可为 ControlModifier 或以 | 分隔的组合。text 支持 Unicode。pointer 的 type 为 click、press、move、release、double_click 或 wheel；x、y 是控件局部坐标，省略时使用中心；button／buttons 使用 LeftButton、RightButton、NoButton 等 Qt 名称，滚轮用 delta_x／delta_y。拖动通过 press、move、release 完成。对象需可见、启用且有所属窗口；业务操作优先使用已声明的 node.action。
 
-capture 的 target 可为 window、graph、layout、runtime、logs、library 或 `view.<node>.<view>`。目标窗口需已显示且未最小化，完成的 job 返回本地 PNG 路径。graph.activity 返回实际绘图层采样频率、亮条位置、速度和间距，不修改计算调度。
+capture 是异步任务，target 可为 window、graph、layout、runtime、logs、library、插件工作区或 `view.<node>.<view>`。window 目标可用 window 参数指定工作区窗口 ID；未指定时取第一个窗口。窗口被遮挡或最小化时使用 QQuickWindow 的按需抓取，不恢复、不激活窗口；页面和 view 按 devicePixelRatio 裁剪。target 为页面时，先打开页面，并在事件循环的下一回合确认 QML 安装完成后再抓取；实现不使用 processEvents，也不在持有页面裸指针时重入事件循环。整个任务（含打开页面、等待前置 job、grabToImage ready）共享 30 秒总时限；超时、前置任务失败或 grab 对象销毁都会让 job 失败并释放抓取对象，不留下半成品。结果含 target、window、captured_at、observation（请求时观察版本）、observation_scope="request"、request_observation、completion_observation、batch_associated=false 和 single_batch=false；后两者明确表示请求观察与完成渲染不保证属于同一采样批次。capture 可带 job 引用，先等待该任务完成再截图。graph.activity 返回实际绘图层采样频率、亮条位置、速度和间距，不修改计算调度。
 
-workspace.open 定位已有页面。插件库始终以唯一精简子窗口打开；workspace.detach/move 保持共享会话，window.pin 控制置顶。标签栏位于顶部，公共引擎位于底部。功能设计和界面设计的对象栏、属性栏可用分隔条拖到 0 宽度隐藏，再拖回或用图标展开。插件库不能移入工作区标签。
+workspace.open 定位已有页面；activate 默认 false（API 调用不显示、不恢复、不抢焦点），显式传 true 或调用 window.configure focus 才会激活窗口。插件库始终以唯一精简子窗口打开；workspace.detach/move 保持共享会话，window.pin 控制置顶。标签栏位于顶部，公共引擎位于底部。功能设计和界面设计的对象栏、属性栏可用分隔条拖到 0 宽度隐藏，再拖回或用图标展开。插件库不能移入工作区标签。
 
 `window.configure` 按窗口 ID 设置 x、y、width、height、state 和 focus；state 为 normal、minimized、maximized 或 fullscreen。可将最小化窗口恢复为 normal，再内部截图。app.state 的 workspaces.windows 同时返回实际窗口位置、尺寸、state、focused 和 native_owned。分离页面为无原生 owner 的普通窗口，可与主窗口交替聚焦；始终置顶只由 window.pin 控制。
 
 窗口记录另提供 visible、native_visible、exposed 和 frame_count。隐藏启动的 Windows 窗口也可通过 window.configure 的 state=normal 恢复实际显示；截图前应确认 exposed 或绘制帧已更新。
+
+## 软件发布与设置窗口
+
+`publish.start` 复用 GUI 的发布器：参数为 `project`（可选，默认当前工程）、`directory`、`name`、`version`、`app_id`、`retain_original`、`overwrite`、`python`。成功返回 `{started:true, job, state:"running", log}`；进度写入同一 job 的 `stage/progress`，完成后 job.result 含 `artifact/path/bytes/state`。`publish.state` 读取同一状态（含 `job_state`），`publish.cancel` 只取消指定 job（`job` 可选，单任务时省略），`publish.log` 返回日志路径、文本、字节数和截断标记。发布器仍只允许一个并发任务；取消会终止进程树并清理半成品。发布运行模式禁止这四个命令。
+
+`settings.open(page)` 打开实际设置窗口并选择页面。页面 key：编辑器 `general/project/plugins/python/resources/tasks`；发布应用只有 `general/tasks`。GUI 菜单和 Ctrl+, 走同一窗口；隐藏页面不会被创建或初始化。关闭统一设置窗口使用 `settings.close` 控件；旧的 `plugins.close` 已随设置窗口统一而移除。
 
 ## 录制、回放与布尔控制
 
@@ -117,9 +123,9 @@ position 为秒，direction 为 -1/1，倍速为 0.125～16。截断打开时，
 
 管理树的插件和分类复选框控制本地启用状态，分类覆盖其完整子树，包含折叠或搜索隐藏的插件。`plugin.enable` 接受单个 plugin 或 plugins 节点 ID 数组（二者选一）和 enabled；整批先检查是否存在及工程引用，任何一个不允许停用时整批保持原状。分类显示全启用、部分启用、全停用三种状态。
 
-`project.options` 查询或修改 include_plugins；修改会标记未保存。project.save 沿用设置，project.export 可单独指定并保持当前工程路径不变。携带时写入用到的全部官方/用户包和资源；不携带时保留 plugin_dependencies，包括 id、version、sha256 和 relative_path。目录关系仅存在工程中，插件包内不保存分类。
+`project.info` 修改工程名称、描述、作者和工程版本，作为正常工程编辑进入撤销栈；工程版本为非空自由文本。`project.options` 查询或修改 include_plugins；修改会标记未保存。project.save 沿用设置，project.export 可单独指定并保持当前工程路径不变。携带时写入用到的全部官方/用户包和资源；不携带时保留 plugin_dependencies，包括 id、version、sha256 和 relative_path。目录关系仅存在工程中，插件包内不保存分类。
 
-project.open 在更换工程前返回 requires_plugins/missing_plugins、requires_plugin_selection/conflicts 或 requires_restart/plugins。版本冲突需要明确传入 plugin_selections={包ID:project/local} 再打开；每次重新打开存在冲突的工程重新选择。打开不自动运行。用命令行打开工程失败时，错误同时写入 native.log 并显示为界面通知，不会静默退出；原生崩溃写入程序目录 cache/logs/CoRig-crash-时间.log 与 .dmp。
+project.open 在更换工程前返回 requires_plugins/missing_plugins、requires_plugin_selection/conflicts 或 requires_restart/plugins。版本冲突需要明确传入 plugin_selections={包ID:project/local} 再打开；每次重新打开存在冲突的工程重新选择。打开不自动运行。用命令行打开工程失败时，错误同时写入 native.log 并显示为界面通知，不会静默退出；原生崩溃写入程序目录 cache/logs/CoRig-crash-时间.log 与 .dmp。 工程正在运行时调用 project.open/project.new 不会切换工程，返回 requires_runtime_stop=true；界面据此询问是否停止运行后继续，命令行调用方应先 runtime.stop 再重试。
 
 plugin.export 的单包参数为 plugin/path；批量参数为 plugins（包ID列表）、directory、scope。批量导出保留目录，存在目标时返回 requires_confirmation/conflicts，未写入任何包；确认后传 overwrite=true。scope=project 导出工程当前选定版本，scope=library 导出本地版本。传入 project（工程文件路径）时直接读取工程携带的插件包写到 directory，不要求先打开工程：省略 plugins 表示导出全部，同样以 overwrite 确认覆盖；工程在本机无法启动时也能取出内嵌包，再用 plugin.import 安装。plugin.export.dialog 打开相同树状勾选界面。正在使用的节点不能停用，包不能移除；失败返回引用。
 
@@ -145,7 +151,7 @@ Python 插件按包使用独立工作进程；同包节点各自持有 namespace
 | `app.restart` | discard, path, plugin_selections |
 | `app.state` |  |
 | `batch` | commands |
-| `capture` | target, path, width, height |
+| `capture` | target, path, width, height, job, window |
 | `clipboard.read` |  |
 | `container.layout` | id, width, height, grid |
 | `controls.click` | id, page |
@@ -212,6 +218,7 @@ Python 插件按包使用独立工作进程；同包节点各自持有 namespace
 | `preferences.set` | theme, python, read_only |
 | `project.export` | path, include_plugins |
 | `project.get` |  |
+| `project.info` | name, description, author, version |
 | `project.new` | name, discard |
 | `project.open` | path, discard, plugin_selections |
 | `project.options` | include_plugins |
@@ -262,5 +269,10 @@ Python 插件按包使用独立工作进程；同包节点各自持有 namespace
 | `workspace.detach` | page, x, y |
 | `workspace.list` |  |
 | `workspace.move` | page, window, index |
-| `workspace.open` | page, window |
+| `workspace.open` | page, window, activate |
+| `settings.open` | page（默认 general） |
+| `publish.start` | project, directory, name, version, app_id, retain_original, overwrite, python |
+| `publish.state` |  |
+| `publish.cancel` | job |
+| `publish.log` |  |
 | `workspace.remove` | page |

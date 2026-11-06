@@ -1,6 +1,6 @@
 ---
 name: corig
-description: 通过联调 CoRig 的本地 API 创建工程、搭建功能与界面、配置插件、运行调试并获取内部截图。用于 CoRig 软件的实际操作与结果核验。
+description: 通过联调 CoRig 的本地 API 创建工程、搭建功能与界面、配置插件、运行调试并获取内部截图；也用于以只读方式接入发布出去的应用。用于 CoRig 软件的实际操作与结果核验。
 ---
 
 # 联调 · CoRig
@@ -23,9 +23,9 @@ description: 通过联调 CoRig 的本地 API 创建工程、搭建功能与界�
 
 删除／替换前用 editor.plan 展示影响，确认后 editor.remove/replace 携带 confirmed=true 和 revision。editor.copy/paste 独立复制新 ID，外部连线不继承。功能属性只用 node.configure；界面外观和布局只用 ui.item.patch，不以界面参数覆盖功能初值。layout.canvas 的 width/height 为设计尺寸，grid_size 为 1～128 px；所有界面位置、尺寸及容器排列吸附网格，运行时整图等比缩放。对象栏保留文字缩进以表示容器层级。容器名称仅在对象层级显示，设计与运行均不显示容器标题，也不保留标题栏空间。
 
-project.validate 检查工程结构；graph.overlaps 单独查询节点重叠与间距警告，生成或调整布局后应确认结果为空。capture 获取真实窗口或页面截图并查看本地图片，截图不能替代运行数据。目标窗口需要显示和恢复。共享引擎控件的 ID 是 execution.*，独立于当前工作区。
+project.validate 检查工程结构；graph.overlaps 单独查询节点重叠与间距警告，生成或调整布局后应确认结果为空。capture 获取真实窗口或页面截图并查看本地图片，截图不能替代运行数据。窗口被遮挡或最小化时按需抓取，不恢复、不激活窗口；capture 是异步任务，30 秒总时限，结果含请求/完成观察版本并明确 batch_associated=false、single_batch=false。共享引擎控件的 ID 是 execution.*，独立于当前工作区。
 
-用 ui.item.schema 查询外观字段，ui.view.bind 修改已有视图绑定并保留布局。graph.connection.options 查询端口兼容性。editor.state/configure 按 page=graph/layout 查询／设置画布 zoom、pan_x、pan_y、left_width、right_width；侧栏宽度 0 表示收起，fit=true 适应画布，graph 的 animation 控制数据活动显示。它们只改显示状态。window.configure 设置窗口几何与 normal/minimized/maximized/fullscreen，可先恢复窗口再截图。
+用 ui.item.schema 查询外观字段，ui.view.bind 修改已有视图绑定并保留布局。graph.connection.options 查询端口兼容性。editor.state/configure 按 page=graph/layout 查询／设置画布 zoom、pan_x、pan_y、left_width、right_width；侧栏宽度 0 表示收起，fit=true 适应画布，graph 的 animation 控制数据活动显示。它们只改显示状态。window.configure 设置窗口几何与 normal/minimized/maximized/fullscreen；截图不要求先恢复窗口。
 
 project.save 保存用户指定的单文件 .crpj，未指定路径时默认写入程序数据目录的 project/。project.options 的 include_plugins 决定是否携带实际用到的全部官方和用户插件及资源，关闭时只记录依赖。首次保存与另存为提供选项，普通保存沿用；模型资源随工程保存，解释器路径仅在本机设置中。只读取 CoRig 新格式，不迁移旧工程或录制文件。打开工程不自动运行、连接或发送。
 
@@ -47,6 +47,14 @@ workspace.open 定位已有页面，插件库打开唯一精简子窗口，不�
 
 controls.list 可按 page 发现具名及未命名 QML 控件，记录包含 node/view/ui_item、可读值、writable 与 actions。优先使用明确命名的 ID；自动 handle 在实际对象存活期间稳定，视图重建／切换工程后重新发现，不能持久保存。controls.get 读取状态；controls.set 操作 writable 字段，文本再 controls.commit。标准滑块、下拉框、SpinBox 和勾选框会触发真实操作。自绘控件使用 controls.key/pointer 直接向应用内 Qt 对象投递事件，无需桌面自动化；业务动作仍优先 node.action，文件通过结构化路径传递。
 
+## 发布应用（只读）
+
+发布出去的应用以 `app_mode=publish` 运行，只能观测、调参、控制运行和截图，不能编辑或保存工程。先用 `app.state` 或 `GET /v3/describe` 确认模式，再读 `schema`/`registry`：发布模式的 `allow` 白名单当前为 46 条（run/params/view/capture/log/job/controls/settings 等），`deny` 86 条（全部编辑、保存、插件管理、同步与软件发布），另有 2 条条件命令（`preferences.set`、`project.export_original`），`batch` 为 `deny`。被拒绝时返回“发布运行模式不允许此操作”，不要改用编辑命令绕过。
+
+连接信息在 `<exe 主文件名>.data/data/.sessions/api.json`，多实例的每进程记录在 `instances/api-<pid>-<port>.json`；发布模式没有 `--data-dir`，不能指向其他目录。令牌每次启动生成、仅存本机，不得写进工程、日志或回答。参数调整使用 `params.get/set/reset`，写入工作根的 `data/params/user-params.json`，不影响只读工程快照，也不进入撤销。载荷开启留存时 `/v3/describe` 才列出 `project.export_original`；`path` 必填，目标存在需 `overwrite=true`，成功返回 `{exported,path}`，导出的字节等于载荷内 `project/runtime.crpj`（不是发布机原文件）。
+
+发布器可用 `--python-exe` 把基础解释器与依赖闭包写进载荷；发布应用从载荷内 `python/python.exe` 运行 Python 插件（`loadPublishedProject` 设置该环境，worker 用 `-I`），不读取本机 Python 设置。`python.probe` 属于 `deny`。`--python-exe` 未提供或依赖未装好时发布阶段就会失败。
+
 ## 本地 Python
 
 官方插件不依赖 Python。用户扩展只使用用户指定的本地 Python 3.10+；preferences.set 选择解释器，python.probe 检查模块。缺依赖时明确报告，不自动安装或修改环境。用户插件由 JSON 声明及 Python/QML 资源组成，使用 plugin.import，不能加载旧 NodeRuntime 或 PyQt 插件。
@@ -67,4 +75,4 @@ Python 插件按包使用独立工作进程，同包节点 state 与 namespace �
 
 plugin.export(plugins,directory,scope) 批量导出并保留目录；目标已存在时先返回 requires_confirmation 和 conflicts，不写入文件。GUI 同样支持全选、全不选、反选和分类选择。覆盖现有文件需要明确确认再传 overwrite=true。工程打开冲突由用户选择 plugin_selections 中的 project/local；requires_plugins 报告缺失依赖，requires_restart 报告需重启的 C++ 包，不能视作已打开。
 
-安装版与便携版的数据默认都在程序所在目录（安装器默认装到当前用户 %LOCALAPPDATA%\Programs\CoRig）；portable.ini 只是便携包标记，运行时不读取；--data-dir 可改数据目录。update.state 查询维护支持，update.check 等待真实任务结果，update.install 启动维护工具前必须保存工程。正式更新源需先部署，未部署或不可达时如实报告。app.restart 保留数据目录和工程路径。不要替用户切换插件版本或覆盖未保存工程。
+编辑模式下安装版与便携版的数据默认都在程序所在目录（安装器默认装到当前用户 %LOCALAPPDATA%\Programs\CoRig）；portable.ini 只是便携包标记，运行时不读取；--data-dir 可改数据目录。发布应用没有 `--data-dir`，数据固定在 exe 旁的 `<exe 主文件名>.data`，详见[发布指南](PUBLISHING.md)。update.state 查询维护支持，update.check 等待真实任务结果，update.install 启动维护工具前必须保存工程。正式更新源需先部署，未部署或不可达时如实报告。app.restart 保留数据目录和工程路径。不要替用户切换插件版本或覆盖未保存工程。

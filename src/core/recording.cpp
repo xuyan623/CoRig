@@ -35,7 +35,10 @@ QByteArray frameHeader(double time, quint32 bytes)
 
 void RecordingWriter::begin(const QString &type)
 {
-    const auto directory = defaultDataDirectory() + "/cache/temp";
+    // Tests and helper tools may not initialise the runtime options; keep the
+    // historical temporary location in that case instead of failing on an empty path.
+    auto directory = runtimePaths().tempRoot;
+    if (directory.isEmpty()) directory = defaultDataDirectory() + "/cache/temp";
     if (!QDir().mkpath(directory)) throw Error("无法创建录制缓存目录：" + directory);
     auto candidate = std::make_unique<QTemporaryFile>(directory + "/CoRig-recording-XXXXXX");
     if (!candidate->open()) throw Error("无法创建录制缓存：" + candidate->errorString());

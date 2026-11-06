@@ -1,5 +1,6 @@
 #include "api_server.h"
 #include "controller.h"
+#include "describe.h"
 #include "core/value.h"
 #include <QTcpSocket>
 #include <QCoreApplication>
@@ -10,6 +11,7 @@
 #include <QLockFile>
 #include <QRandomGenerator>
 #include <QSaveFile>
+#include <QUuid>
 #include <QTimer>
 
 namespace corig {
@@ -30,6 +32,7 @@ static bool authenticated(const QByteArray &received, const QByteArray &expected
 
 ApiServer::ApiServer(Controller &controller) : controller_(controller)
 {
+    instanceId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
     QByteArray secret(32,Qt::Uninitialized);
     for (auto &byte : secret) byte = static_cast<char>(QRandomGenerator::system()->generate() & 0xff);
     token_ = QString::fromLatin1(secret.toHex());
@@ -57,6 +60,12 @@ ApiServer::ApiServer(Controller &controller) : controller_(controller)
                 if (!authenticated(headers.value("authorization"),("Bearer " + token_).toUtf8())) { respond(401,QVariantMap{{"ok",false},{"error","认证失败，请重新读取本次连接信息"}}); return; }
                 if (headers.contains("transfer-encoding")) { respond(400,QVariantMap{{"ok",false},{"error","不接受分块请求"}}); return; }
                 if (request.value(0) == "GET" && request.value(1) == "/v3/schema") { respond(200,QVariantMap{{"ok",true},{"result",controller_.schema()}}); return; }
+                if (request.value(0) == "GET" && request.value(1) == "/v3/describe") {
+                    const QVariantMap instance{{"instance_id",instanceId_},{"pid",record_.value("pid")},
+                        {"url",record_.value("url")},{"started_at",record_.value("started_at")},
+                        {"data_dir",controller_.dataDirectory()}};
+                    respond(200,QVariantMap{{"ok",true},{"result",describeDocument(controller_,instance,controller_.schema())}}); return;
+                }
                 if (request.value(0) != "POST" || request.value(1) != "/v3/command") { respond(404,QVariantMap{{"ok",false},{"error","接口不存在"}}); return; }
                 bool valid = false; const auto length = headers.value("content-length").toLongLong(&valid);
                 if (!valid || length < 0 || length > 8 * 1024 * 1024) { respond(413,QVariantMap{{"ok",false},{"error","请求体需要有效长度且不超过 8 MiB"}}); return; }
@@ -64,7 +73,11 @@ ApiServer::ApiServer(Controller &controller) : controller_(controller)
                 QJsonParseError parse; const auto document = QJsonDocument::fromJson(buffer->mid(boundary + 4,length),&parse);
                 if (parse.error != QJsonParseError::NoError || !document.isObject()) { respond(400,QVariantMap{{"ok",false},{"error","请求需要 JSON 对象"}}); return; }
                 const auto body = document.toVariant().toMap();
-                try { respond(200,QVariantMap{{"ok",true},{"result",controller_.command(body.value("op").toString(),body.value("args").toMap())}}); }
+                const auto op = body.value("op").toString();
+                // app.connection is transport-level information owned by this server
+                // (discovery path + URL); the copyable text never contains the token.
+                if (op == "app.connection") { respond(200,QVariantMap{{"ok",true},{"result",connectionInfo()}}); return; }
+                try { respond(200,QVariantMap{{"ok",true},{"result",controller_.command(op,body.value("args").toMap())}}); }
                 catch (const std::exception &error) { respond(400,QVariantMap{{"ok",false},{"error",QString::fromUtf8(error.what())}}); }
             });
         }
@@ -77,11 +90,19 @@ void ApiServer::publish()
     const auto directory = controller_.dataDirectory() + "/.sessions"; QDir().mkpath(directory + "/instances");
     discovery_ = directory + "/instances/api-" + QString::number(QCoreApplication::applicationPid()) + "-" + QString::number(serverPort()) + ".json";
     alias_ = directory + "/api.json";
+    // Identity mirrors Controller::appState()/runOptions(): an editor record has an
+    // empty app_id, while a published record names the payload that produced it.
+    // The token stays in its single existing field and is never logged or copied.
     record_ = {{"application","CoRig"},{"api_version",3},{"url","http://127.0.0.1:" + QString::number(serverPort())},{"token",token_},
-        {"pid",QCoreApplication::applicationPid()},{"started_at",QDateTime::currentMSecsSinceEpoch() / 1000.}, {"discovery",discovery_}};
+        {"instance_id",instanceId_},
+        {"pid",QCoreApplication::applicationPid()},{"started_at",QDateTime::currentMSecsSinceEpoch() / 1000.}, {"discovery",discovery_},
+        {"app_id",runOptions().appId},{"app_name",controller_.appName()},{"app_version",controller_.appVersion()},
+        {"release_hash",runOptions().releaseHash},{"mode",controller_.appMode()},{"retain_original",controller_.retainOriginal()}};
     QLockFile lock(directory + "/.api-discovery.lock"); if (!lock.tryLock(3000)) throw Error("本地连接信息正在更新");
     saveRecord(discovery_,record_); saveRecord(alias_,record_);
 }
+
+QVariantMap ApiServer::connectionInfo() const { return connectionDocument(record_); }
 
 ApiServer::~ApiServer()
 {

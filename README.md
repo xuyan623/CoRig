@@ -32,11 +32,11 @@ AI 可以通过本地接口参与设计、运行、读取数据和检查结果�
 | 运行调试 | 统一运行与暂停、整图/节点单步、输入输出和执行耗时检查、筛选日志 |
 | AI 协作与扩展 | 本地 API、原生 CLI、真实数据与内部截图读取，以及 C++/Python 插件、树状导出和版本选择 |
 
-官方功能使用原生 C++ / Qt Quick，**直接使用无需安装 Python**。仅在使用 Python 脚本或 Python 插件时，需要配置本机解释器。
+官方功能使用原生 C++ / Qt Quick，**直接使用无需安装 Python**。只有在编辑器里使用 Python 插件时，才需要配置本机解释器；发布含 Python 插件的工程时，发布器把裁剪后的解释器与依赖闭包打进载荷，接收方无需安装 Python，发布应用从载荷解释器运行 Python 插件（见[发布指南](docs/PUBLISHING.md)）。
 
 ## 快速上手
 
-1. 从 [Releases](https://github.com/xuyan623/CoRig/releases/latest) 下载 `CoRigSetup-0.4.0-Windows-x64.exe` 安装程序，或完整解压 `CoRig-Windows-x64.zip` 便携包。
+1. 从 [Releases](https://github.com/xuyan623/CoRig/releases/latest) 下载 `CoRigSetup-0.4.4-Windows-x64.exe` 安装程序，或完整解压 `CoRig-Windows-x64.zip` 便携包。
 2. 双击解压目录中的 `CoRig.exe`，保留旁边的 DLL、`plugins/` 和 `qml/` 等目录。
 3. 打开 `examples/FunctionLab.crpj`，点击底部运行按钮，即可看到持续变化的曲线和三维姿态。
 4. 尝试 `RecordPlayback.crpj` 体验录制与回放，或打开 `SerialPlot.crpj` 验证软件串口回环，再按需要选择实际串口。
@@ -52,7 +52,17 @@ AI 可以通过本地接口参与设计、运行、读取数据和检查结果�
 .\CoRig-cli.exe api registry
 ```
 
-可将随包提供的 [corig Skill](skills/corig/SKILL.md) 交给支持技能的 AI 工具；具体接口、连接方法和扩展开发见下方文档。
+可将随包提供的 [corig Skill](skills/corig/SKILL.md) 交给支持技能的 AI 工具；具体接口、连接方法和扩展开发见下方文档。发布出去的应用同样开放本地 API，但只读、命令受限，接入方法见[从 AI 接入发布应用](docs/AI_ACCESS.md)。
+
+## 发布为独立应用
+
+调试完成后，可把工程连同程序、Qt 依赖和插件封装成一个 exe：接收方双击即可运行，不需要安装 CoRig 或 Python，工程以只读快照运行，观察数据、调整参数和控制运行不受影响。
+
+```powershell
+.\CoRig-publish.exe publish --project .\examples\FunctionLab.crpj --output D:\build\FunctionLab --single-exe
+```
+
+运行期数据固定在 exe 旁的 `<exe 主文件名>.data`（含 `data/` 与 `cache/`），不写系统目录；失败码、留存开关与清理规则见[发布指南](docs/PUBLISHING.md)，验收方法见[发布应用验证](docs/VERIFICATION_PUBLISH.md)。
 
 ## 文档
 
@@ -62,8 +72,11 @@ AI 可以通过本地接口参与设计、运行、读取数据和检查结果�
 | [本地 API](docs/API.md) | GUI/CLI 共用命令、数据读取、界面操作及异步任务 |
 | [插件开发](docs/PLUGIN_SDK.md) | 统一插件包、C++ SDK、Python 逻辑与 QML 视图 |
 | [架构与设计约定](docs/ARCHITECTURE.md) | 模块职责、信号语义和界面实现约定 |
-| [构建与发布](docs/BUILDING.md) | 开发环境、原生测试和便携包生成 |
+| [构建与发布](docs/BUILDING.md) | 开发环境、原生测试、便携包与发布器构建 |
+| [发布为独立应用](docs/PUBLISHING.md) | 发布流程、单 exe 容器、工作根、失败码与清理 |
+| [AI 接入发布应用](docs/AI_ACCESS.md) | 实例发现、令牌、describe、能力白名单与安全边界 |
 | [验证范围](docs/VERIFICATION.md) | 已验证能力、性能测量及待实机验证项目 |
+| [发布应用验证](docs/VERIFICATION_PUBLISH.md) | 发布物验收矩阵、证据规范与未验证边界 |
 | [版本说明](docs/RELEASE_NOTES.md) | 当前发布内容与格式要求 |
 
 ## 源码与许可

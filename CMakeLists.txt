@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(CoRig VERSION 0.4.3 LANGUAGES C CXX)
+project(CoRig VERSION 0.4.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -50,6 +50,7 @@ endforeach()
         src/core/series.cpp src/core/series.h src/core/mesh.cpp src/core/mesh.h
         src/core/python_host.cpp src/core/python_host.h
         src/core/python_node.cpp src/core/native_plugin.cpp src/core/native_plugin.h
+        src/core/run_mode.cpp src/core/publish.cpp src/core/container.cpp src/core/user_params.cpp src/core/python_bundle.cpp
     )
     target_link_libraries(corig_core PUBLIC Qt6::Gui Qt6::Qml Qt6::Core5Compat)
     qt_add_resources(corig_core python_worker PREFIX "/" BASE "python" FILES python/worker.py)
@@ -89,11 +90,12 @@ endforeach()
     add_library(corig_design STATIC src/quick/graph_geometry.cpp src/quick/graph_geometry.h src/app/model_commands.cpp src/app/model_commands.h src/app/editor_commands.cpp)
     target_link_libraries(corig_design PUBLIC corig_core Qt6::Gui)
 if(CORIG_BUILD_APP)
-    add_library(corig_app STATIC src/app/controller.cpp src/app/controller_commands.cpp src/app/ui_commands.cpp src/app/controller.h
+    add_library(corig_app STATIC src/app/controller.cpp src/app/controller_commands.cpp src/app/controller_export.cpp src/app/ui_commands.cpp src/app/controller.h
         src/app/property_session.cpp src/app/property_session.h
         src/app/plugin_store.cpp src/app/plugin_store.h
         src/app/updates.cpp src/app/updates.h
-        src/app/api_server.cpp src/app/api_server.h src/app/workspaces.cpp src/app/workspaces.h)
+        src/app/api_server.cpp src/app/api_server.h src/app/workspaces.cpp src/app/workspaces.h
+        src/app/command_registry.cpp src/app/describe.cpp)
     target_link_libraries(corig_app PUBLIC corig_design Qt6::Quick Qt6::QuickControls2 Qt6::Svg)
     add_library(corig_quick STATIC src/quick/renderers.cpp src/quick/renderers.h src/quick/icon_provider.cpp src/quick/icon_provider.h)
     target_link_libraries(corig_quick PUBLIC corig_design Qt6::Quick Qt6::Svg)
@@ -116,6 +118,18 @@ if(CORIG_BUILD_APP)
     qt_add_qml_module(CoRig URI CoRig VERSION 1.0 RESOURCE_PREFIX "/qt/qml" QML_FILES ${CORIG_QML_FILES})
     qt_add_executable(CoRig-cli src/app/cli.cpp)
     target_link_libraries(CoRig-cli PRIVATE corig_core Qt6::Network)
+    # Headless publisher: snapshots a project into a self-contained payload and
+    # assembles the single-executable application container.
+    qt_add_executable(CoRig-publish src/app/publish_main.cpp)
+    target_link_libraries(CoRig-publish PRIVATE corig_core)
+    # The launcher has no Qt dependency so it can start on a machine without the
+    # runtime deployed; it links the MSVC runtime statically.
+    add_executable(CoRig-launcher WIN32 src/launcher/main.cpp src/core/container.cpp)
+    target_include_directories(CoRig-launcher PRIVATE src)
+    target_link_libraries(CoRig-launcher PRIVATE bcrypt shell32)
+    if(MSVC)
+        set_target_properties(CoRig-launcher PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    endif()
     # Shipped inside the installation directory so removing CoRig never needs
     # the maintenance tool or the original setup file.
     qt_add_executable(CoRig-uninstall src/app/uninstall.cpp)
@@ -135,6 +149,22 @@ if(CORIG_BUILD_APP)
     qt_add_executable(corig_editor_test tests/native/editor_test.cpp)
     target_link_libraries(corig_editor_test PRIVATE corig_design Qt6::Test)
     add_test(NAME editor COMMAND corig_editor_test)
+    qt_add_executable(corig_w1_publish_test tests/native/w1_publish_test.cpp)
+    target_link_libraries(corig_w1_publish_test PRIVATE corig_app corig_core Qt6::Test)
+    set_target_properties(corig_w1_publish_test PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME w1_publish COMMAND corig_w1_publish_test)
+    qt_add_executable(corig_user_params_test tests/native/user_params_test.cpp)
+    target_link_libraries(corig_user_params_test PRIVATE corig_core Qt6::Test)
+    set_target_properties(corig_user_params_test PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME user_params COMMAND corig_user_params_test)
+    qt_add_executable(corig_describe_test tests/native/describe_test.cpp)
+    target_link_libraries(corig_describe_test PRIVATE corig_app Qt6::Test)
+    set_target_properties(corig_describe_test PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME describe COMMAND corig_describe_test)
+    qt_add_executable(corig_command_registry_test tests/native/command_registry_test.cpp)
+    target_link_libraries(corig_command_registry_test PRIVATE corig_app Qt6::Test)
+    set_target_properties(corig_command_registry_test PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME command_registry COMMAND corig_command_registry_test)
     qt_add_executable(corig_workbench_ui_test tests/native/workbench_ui_test.cpp)
     target_link_libraries(corig_workbench_ui_test PRIVATE corig_app corig_quick Qt6::Test Qt6::QuickControls2)
     target_compile_definitions(corig_workbench_ui_test PRIVATE CORIG_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -163,7 +193,7 @@ if(CORIG_BUILD_APP)
 endif()
 
 if(CORIG_BUILD_APP)
-    foreach(target CoRig corig_plugin_test corig_editor_test corig_workbench_ui_test corig_execution_test corig_control_test corig_recording_test corig_io_test)
+    foreach(target CoRig corig_plugin_test corig_editor_test corig_command_registry_test corig_describe_test corig_w1_publish_test corig_workbench_ui_test corig_execution_test corig_control_test corig_recording_test corig_io_test)
         add_dependencies(${target} corig_official_package)
     endforeach()
 endif()

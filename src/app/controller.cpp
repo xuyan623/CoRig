@@ -1,10 +1,13 @@
 #include "controller.h"
+#include "command_registry.h"
 #include "workspaces.h"
 #include "api_server.h"
 #include "quick/graph_geometry.h"
 #include "core/catalog.h"
+#include "core/project.h"
 #include "core/resource_policy.h"
 #include "core/plugin_script.h"
+#include "core/python_bundle.h"
 #include "property_session.h"
 #include <QQmlEngine>
 #include <QQmlContext>
@@ -12,6 +15,7 @@
 #include <QQuickItemGrabResult>
 #include <QGuiApplication>
 #include <QClipboard>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QDrag>
@@ -169,7 +173,11 @@ QVariant UserViewBridge::commit(const QVariantMap &changes)
 Controller::Controller(QString dataDirectory, QObject *parent, const QVariantMap &initialCatalog) : QObject(parent), dataDirectory_(QDir(dataDirectory).absolutePath()), project_(emptyProject())
 {
     QDir().mkpath(dataDirectory_);
+    const auto &options = runOptions();
+    publishMode_ = options.mode == RunMode::Publish;
+    if (publishMode_) { readOnly_ = true; appName_ = options.appName; appVersion_ = options.appVersion; retainOriginal_ = options.retainOriginal; }
     settings_ = std::make_unique<QSettings>(dataDirectory_ + "/settings.ini",QSettings::IniFormat);
+    params_ = std::make_unique<UserParams>(dataDirectory_);
     configureResourceLimits(settings_->value("resources/limits").toMap(),true);
     theme_ = settings_->value("theme","dark").toString();
     python_ = std::make_unique<PythonHost>([this] { return closing_ || (engine_ && engine_->interrupted()); },[this](const QVariantMap &event) {
@@ -195,7 +203,10 @@ Controller::Controller(QString dataDirectory, QObject *parent, const QVariantMap
     });
     const auto interpreter = settings_->value("python").toString();
     if (QFileInfo(interpreter).isFile()) python_->selectInterpreter(interpreter);
-    plugins_ = std::make_unique<PluginStore>(dataDirectory_ + "/plugins",*settings_,[this](const QVariantMap &request) { return python_->call(request); });
+    // A published application reads packages from its payload and never copies
+    // them into user data; the editor keeps its install-and-seed library.
+    plugins_ = std::make_unique<PluginStore>(publishMode_ ? options.pluginRoot : dataDirectory_ + "/plugins",
+        *settings_,[this](const QVariantMap &request) { return python_->call(request); },publishMode_);
     catalog_ = plugins_->catalog(initialCatalog.isEmpty() ? project_ : initialCatalog);
     NodeHost host;
     host.catalog = [this](const QVariantMap &project) { return plugins_->catalog(project); };
@@ -262,6 +273,7 @@ void Controller::shutdown()
     for (const auto &service : services_) service->shutdown();
     services_.clear();
     workspaces_.reset();
+    if (params_) params_->flush();
     settings_->sync();
 }
 
@@ -270,6 +282,7 @@ void Controller::attachUi(QQmlEngine *engine)
     qmlEngine_ = engine; engine->rootContext()->setContextProperty("App",this);
     workspaces_ = std::make_unique<Workspaces>(engine,*this);
     api_ = std::make_unique<ApiServer>(*this);
+    setConnectionProvider([this] { return api_ ? api_->connectionInfo() : QVariantMap{}; });
     workspaces_->open("graph");
 }
 
@@ -348,6 +361,52 @@ QVariantMap Controller::job(const QString &id) const
     return jobs_.value(id);
 }
 
+QVariantMap Controller::loadPublishedProject(const QString &path)
+{
+    if (!publishMode_) throw Error("只有发布运行模式可以装载发布工程");
+    // The manifest names the snapshot hash; verify it before trusting the file so a
+    // truncated or swapped payload is rejected instead of half-loaded.
+    const auto expected = runOptions().releaseHash;
+    if (!expected.isEmpty()) {
+        QFile snapshot(path);
+        if (!snapshot.open(QIODevice::ReadOnly)) throw Error("无法读取工程快照：" + path);
+        const auto actual = QString::fromLatin1(QCryptographicHash::hash(snapshot.readAll(),QCryptographicHash::Sha256).toHex());
+        if (actual.compare(expected,Qt::CaseInsensitive) != 0) throw Error("应用载荷校验失败：工程快照与清单不一致");
+    }
+    const auto project = loadProject(path);
+    const auto readiness = plugins_->readiness(project);
+    if (readiness.value("requires_plugins").toBool() || readiness.value("requires_plugin_selection").toBool()
+        || readiness.value("requires_restart").toBool())
+        throw Error("应用载荷不完整：工程需要的插件未随载荷提供");
+    validateProject(project,plugins_->catalog(project));
+    // A published application runs Python only from its payload. Payloads without
+    // python/ keep the editor default (unused unless a node asks for Python).
+    if (QFileInfo(runOptions().pythonRoot + QStringLiteral("/python.exe")).isFile())
+        python_->setEnvironment(pythonEnvironmentForRun());
+    // The shipped snapshot is the reset baseline: user overrides and temporary
+    // parameter changes must never become the value "reset" restores.
+    baselineProject_ = project;
+    params_->load(); params_->setReleaseHash(runOptions().releaseHash);
+    auto overlaid = project; params_->apply(overlaid);
+    projectPath_ = path; undo_.clear(); redo_.clear(); views_.clear(); viewArguments_.clear();
+    adopt(overlaid,false);
+    engine_->submit("project.apply",{{"project",project_}});
+    tell("应用已就绪");
+    return appState();
+}
+
+void Controller::ensureModeAllowed(const QString &operation) const
+{
+    if (!publishMode_) return;
+    const auto decision = CommandRegistry::instance().publishDecision(operation);
+    if (decision.policy == PublishPolicy::Allow) return;
+    // Conditional operations validate their own arguments in the handler: batch
+    // re-checks every child, preferences.set only accepts theme/log_path and
+    // project.export_original requires retain_original.
+    if (decision.policy == PublishPolicy::Conditional) return;
+    throw Error(QString("发布运行模式不允许此操作：") + operation);
+}
+
 void Controller::requireEditable(bool layout) const
 {
     if (readOnly_) throw Error("工程处于只读模式，请先进入编辑模式");
@@ -388,7 +447,7 @@ QVariantMap Controller::commit(EditResult edit, const QString &label, bool remem
 
 QVariantMap Controller::appState() const
 {
-    return {{"application","CoRig"},{"version","0.4.3"},{"project",project_.value("name")},{"path",projectPath_},{"dirty",dirty_},{"read_only",readOnly_},
+    return {{"application","CoRig"},{"version","0.4.4"},{"app_mode",appMode()},{"app_name",appName_},{"app_version",appVersion_},{"retain_original",retainOriginal_},{"project",project_.value("name")},{"path",projectPath_},{"dirty",dirty_},{"read_only",readOnly_},
         {"busy",busy_},{"runtime",engine_->observation()},{"workspaces",workspaces_ ? workspaces_->state() : QVariantMap{}},
         {"python",pythonPath()},{"theme",theme_},{"view_observations",observedViews_},{"selection",QVariantMap{{"id",selected_},{"kind",selectedKind_},{"nodes",selectedNodes_}}}};
 }

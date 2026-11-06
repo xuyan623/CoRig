@@ -98,7 +98,7 @@ protected:
 private:
     QVariantMap call(const QString &entry, const QVariantMap &inputs, const QString &operation = "call", const QVariantMap &options = {})
     {
-        if (!host_.python) throw Error("请先在设置中选择本地 Python 环境");
+        if (!host_.python) throw Error("Python 运行时不可用：请在设置中选择本地 Python 环境，发布应用应包含载荷解释器");
         const auto code = definition_.value("implementation") == "python" ? definition_.value("code").toString() : config_.value("code").toString();
         QVariantMap request{{"package",definition_.value("package_id","scripts")},{"node",id_},{"op",operation},{"code",code},{"entry",entry},{"inputs",inputs},{"state",scriptState_},
             {"resources",definition_.value("resources",QVariantMap{})},{"dependencies",definition_.value("dependencies",QVariantList{})},{"timeout_ms",config_.value("timeout_ms",resourceLimit("python_timeout_ms"))}};

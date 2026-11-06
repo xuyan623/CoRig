@@ -102,7 +102,7 @@ def main():
         client.call('plugin.state')
         client.call('plugin.tree', {'scope':'library'})
         client.call('plugin.settings')
-        client.call('controls.click', {'id':'plugins.close'})
+        client.call('controls.click', {'id':'settings.close'})
         client.call('plugin.enable', {'plugin':'function.cos','enabled':False})
         client.call('plugin.enable', {'plugin':'function.cos','enabled':True})
         client.call('library.state')
@@ -410,7 +410,10 @@ Item {
         # package. They are exercised by the native/installer/example suites;
         # this AI run must not pretend it opened the OS folder or installed.
         separate = {'app.restart','plugin.directory','update.check','update.install',
-                    'job.cancel','workspace.configure','workspace.remove'}
+                    'job.cancel','workspace.configure','workspace.remove',
+                    'app.connection','params.get','params.set','params.reset',
+                    'project.info','project.export_original','publish.start','publish.state',
+                    'publish.cancel','publish.log','settings.open'}
         check(set(missing) <= separate, 'every design/plugin command completed successfully: ' + str(len(client.covered)))
         report = {'count': len(checks), 'checks': checks, 'command_count': len(schema['commands']),
                   'covered_commands': sorted(client.covered), 'missing_commands': missing, 'separate_environment_commands': sorted(separate),

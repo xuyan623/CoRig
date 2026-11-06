@@ -2,10 +2,22 @@ param(
     [string]$IfwBin = '',
     [string]$RepositoryUrl = 'https://xuyan623.github.io/CoRig/updates/windows-x64/',
     [string]$QtRuntimeVersion = '6.12.0',
-    [string]$ApplicationPackageVersion = ''
+    [string]$ApplicationPackageVersion = '',
+    # Keep candidate builds isolated from an existing dist tree and from other
+    # build trees; the defaults preserve the historical release layout.
+    [string]$BuildPath = 'build\native',
+    [string]$ReleasePath = 'build\native-release\CoRig',
+    [string]$OutputRoot = 'dist',
+    [string]$PublishDir = 'dist',
+    [string]$StagePath = 'build\installer'
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$buildRoot = if ([IO.Path]::IsPathRooted($BuildPath)) { $BuildPath } else { Join-Path $repoRoot $BuildPath }
+$release = if ([IO.Path]::IsPathRooted($ReleasePath)) { $ReleasePath } else { Join-Path $repoRoot $ReleasePath }
+$outputRoot = if ([IO.Path]::IsPathRooted($OutputRoot)) { $OutputRoot } else { Join-Path $repoRoot $OutputRoot }
+$publishRoot = if ([IO.Path]::IsPathRooted($PublishDir)) { $PublishDir } else { Join-Path $repoRoot $PublishDir }
+$stage = if ([IO.Path]::IsPathRooted($StagePath)) { $StagePath } else { Join-Path $repoRoot $StagePath }
 if (!$IfwBin) { $IfwBin = Join-Path $repoRoot '.cache\qt-ifw\Tools\QtInstallerFramework\4.7\bin' }
 foreach ($tool in @('binarycreator.exe','repogen.exe')) {
     if (!(Test-Path -LiteralPath (Join-Path $IfwBin $tool))) { throw "请通过 -IfwBin 指定 Qt Installer Framework 的 bin 目录：缺少 $tool" }
@@ -16,11 +28,9 @@ $version = $versionMatch.Groups[1].Value
 # A corrected release can advance the application component independently, so
 # existing installs receive the new payload while the product keeps its version.
 if (!$ApplicationPackageVersion) { $ApplicationPackageVersion = $version }
-$release = Join-Path $repoRoot 'build\native-release\CoRig'
-foreach ($name in @('CoRig.exe','CoRig-cli.exe','CoRigSdk.dll','plugins')) {
+foreach ($name in @('CoRig.exe','CoRig-cli.exe','CoRigSdk.dll','CoRig-publish.exe','CoRig-launcher.exe','windeployqt.exe','qmlimportscanner.exe','plugins','publish-qml','d3d','tools\vc\x64\Microsoft.VC143.CRT')) {
     if (!(Test-Path -LiteralPath (Join-Path $release $name))) { throw "请先生成部署目录：缺少 $name" }
 }
-$stage = Join-Path $repoRoot 'build\installer'
 if (Test-Path -LiteralPath $stage) {
     $resolved = (Resolve-Path -LiteralPath $stage).Path
     if ($resolved -ne [IO.Path]::GetFullPath($stage) -or !(Split-Path -Parent $resolved).Equals((Join-Path $repoRoot 'build'),[StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected installer staging directory' }
@@ -54,8 +64,8 @@ foreach ($part in $parts) {
 }
 # Widgets is needed by the standalone uninstaller introduced in this app
 # payload; app updates must deliver it even when the runtime version is unchanged.
-$applicationFiles = @('CoRig.exe','CoRig-cli.exe','CoRig-uninstall.exe','CoRigSdk.dll','Qt6Widgets.dll','README.md','LICENSE','THIRD_PARTY_NOTICES.md')
-$applicationDirs = @('docs','skills','licenses','examples','verification')
+$applicationFiles = @('CoRig.exe','CoRig-cli.exe','CoRig-uninstall.exe','CoRig-publish.exe','CoRig-launcher.exe','CoRigSdk.dll','Qt6Widgets.dll','windeployqt.exe','qmlimportscanner.exe','README.md','LICENSE','THIRD_PARTY_NOTICES.md')
+$applicationDirs = @('docs','skills','licenses','examples','verification','python','publish-qml','d3d','tools')
 foreach ($item in Get-ChildItem -LiteralPath $release -Force) {
     if ($item.Name -in @('portable.ini','project','plugins','.sessions','settings.ini','cache','native.log','install-manifest.json')) { continue }
     $part = if ($item.Name -in $applicationFiles -or $item.Name -in $applicationDirs) { 'org.corig.application' } else { 'org.corig.runtime' }
@@ -64,7 +74,7 @@ foreach ($item in Get-ChildItem -LiteralPath $release -Force) {
 $pluginData = Join-Path $packages 'org.corig.official\data\plugins'
 New-Item -ItemType Directory -Path $pluginData -Force | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $release 'plugins') -Directory | ForEach-Object {Copy-Item -LiteralPath $_.FullName -Destination $pluginData -Recurse}
-$sdk = Join-Path $repoRoot 'build\native\sdk\CoRigSdk'
+$sdk = Join-Path $buildRoot 'sdk\CoRigSdk'
 if (!(Test-Path -LiteralPath (Join-Path $sdk 'include\corig\plugin.h'))) { throw '请先构建公开插件 SDK' }
 Copy-Item -LiteralPath $sdk -Destination (Join-Path $packages 'org.corig.sdk\data') -Recurse
 # Ship the complete file ownership list with the application component, so an
@@ -98,7 +108,7 @@ foreach ($part in $parts) {
 $xml = Get-Content -LiteralPath (Join-Path $repoRoot 'installer\config\config.xml.in') -Raw
 $xml = $xml.Replace('__VERSION__',$version).Replace('__REPOSITORY__',[Security.SecurityElement]::Escape($RepositoryUrl))
 Set-Content -LiteralPath (Join-Path $config 'config.xml') -Value $xml -Encoding utf8
-$repository = Join-Path $repoRoot 'dist\updates\windows-x64'
+$repository = Join-Path $outputRoot 'updates\windows-x64'
 if (Test-Path -LiteralPath $repository) {
     $resolved = (Resolve-Path -LiteralPath $repository).Path
     if ($resolved -ne [IO.Path]::GetFullPath($repository) -or !(Split-Path -Parent $resolved).Equals((Join-Path $repoRoot 'dist\updates'),[StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected update repository directory' }
@@ -107,11 +117,12 @@ if (Test-Path -LiteralPath $repository) {
 New-Item -ItemType Directory -Path (Split-Path -Parent $repository) -Force | Out-Null
 & (Join-Path $IfwBin 'repogen.exe') -p $packages $repository
 if ($LASTEXITCODE -ne 0) { throw 'Update repository generation failed' }
-$setup = Join-Path $repoRoot "dist\CoRigSetup-$version-Windows-x64.exe"
+$setup = Join-Path $outputRoot "CoRigSetup-$version-Windows-x64.exe"
 # Embed all packages while retaining remote maintenance (IFW 4.7 supports this
 # without --offline-only; newer releases also provide an explicit hybrid flag).
 & (Join-Path $IfwBin 'binarycreator.exe') -c (Join-Path $config 'config.xml') -p $packages $setup
 if ($LASTEXITCODE -ne 0) { throw 'Installer generation failed' }
-$checksums = @($setup,(Join-Path $repoRoot 'dist\CoRig-Windows-x64.zip'),(Join-Path $repoRoot 'dist\CoRig-SDK-Windows-x64.zip'),(Join-Path $repoRoot 'dist\CoRig-source.zip')) | Where-Object {Test-Path -LiteralPath $_} | ForEach-Object { $hash=Get-FileHash -LiteralPath $_ -Algorithm SHA256; '{0}  {1}' -f $hash.Hash.ToLowerInvariant(),(Split-Path -Leaf $hash.Path) }
-Set-Content -LiteralPath (Join-Path $repoRoot 'dist\SHA256SUMS.txt') -Value $checksums -Encoding ascii
+$checksums = @($setup,(Join-Path $publishRoot 'CoRig-Windows-x64.zip'),(Join-Path $publishRoot 'CoRig-SDK-Windows-x64.zip'),(Join-Path $publishRoot 'CoRig-source.zip')) | Where-Object {Test-Path -LiteralPath $_} | ForEach-Object { $hash=Get-FileHash -LiteralPath $_ -Algorithm SHA256; '{0}  {1}' -f $hash.Hash.ToLowerInvariant(),(Split-Path -Leaf $hash.Path) }
+New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $outputRoot 'SHA256SUMS.txt') -Value $checksums -Encoding ascii
 Get-Item -LiteralPath $setup,(Join-Path $repository 'Updates.xml') | Select-Object FullName,Length

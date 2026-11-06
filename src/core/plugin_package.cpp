@@ -1,4 +1,5 @@
 #include "plugin_package.h"
+#include "paths.h"
 #include "resource_policy.h"
 #include <QBuffer>
 #include <QCoreApplication>
@@ -48,6 +49,52 @@ void writeFile(const QString &path, const QByteArray &bytes)
     QSaveFile output(path);
     if (!output.open(QIODevice::WriteOnly) || output.write(bytes) != bytes.size() || !output.commit())
         throw Error("无法写入插件文件：" + path);
+}
+
+// A python block is optional and engine-agnostic: the engine only checks its
+// shape so a malformed declaration fails at package read time instead of during
+// publishing. python/collect.py owns the semantic checks (resolvable import
+// names, installed versions, marker evaluation).
+void checkPythonBlock(const QVariantMap &block, const QString &scope)
+{
+    for (auto i = block.cbegin(); i != block.cend(); ++i) {
+        const auto &key = i.key();
+        if (key != "distributions" && key != "requires" && key != "extras")
+            throw Error(scope + QStringLiteral(" 包含未知的 python 键：") + key);
+        if (i.value().metaType().id() != QMetaType::QVariantMap)
+            throw Error(scope + QStringLiteral(" 的 python.") + key + QStringLiteral(" 需要对象"));
+        const auto entries = i.value().toMap();
+        for (auto j = entries.cbegin(); j != entries.cend(); ++j) {
+            if (j.key().isEmpty()) throw Error(scope + QStringLiteral(" 的 python.") + key + QStringLiteral(" 包含空名称"));
+            if (key == "extras") {
+                if (j.value().metaType().id() != QMetaType::QVariantList)
+                    throw Error(scope + QStringLiteral(" 的 python.extras.") + j.key() + QStringLiteral(" 需要字符串列表"));
+                for (const auto &item : j.value().toList())
+                    if (item.metaType().id() != QMetaType::QString || item.toString().trimmed().isEmpty())
+                        throw Error(scope + QStringLiteral(" 的 python.extras.") + j.key() + QStringLiteral(" 需要非空字符串"));
+                continue;
+            }
+            if (j.value().metaType().id() != QMetaType::QString || j.value().toString().trimmed().isEmpty())
+                throw Error(scope + QStringLiteral(" 的 python.") + key + QLatin1Char('.') + j.key() + QStringLiteral(" 需要非空字符串"));
+        }
+    }
+}
+
+// Package-level declarations are inherited by every plugin of the package;
+// a plugin-level entry overrides the same key without dropping the rest.
+QVariantMap mergePythonBlocks(const QVariantMap &base, const QVariantMap &overrides)
+{
+    auto merged = base;
+    for (auto i = overrides.cbegin(); i != overrides.cend(); ++i) {
+        if (i.value().metaType().id() == QMetaType::QVariantMap
+            && merged.value(i.key()).metaType().id() == QMetaType::QVariantMap) {
+            auto map = merged.value(i.key()).toMap();
+            const auto entries = i.value().toMap();
+            for (auto j = entries.cbegin(); j != entries.cend(); ++j) map[j.key()] = j.value();
+            merged[i.key()] = map;
+        } else merged[i.key()] = i.value();
+    }
+    return merged;
 }
 
 QString contentHash(const QMap<QString,QByteArray> &files)
@@ -110,6 +157,11 @@ PluginPackage PluginPackage::read(const QByteArray &archive)
         throw Error("插件包声明需要 format=corig-plugin、package_api=1、id、version 和 plugins");
     const auto implementation = manifest.value("implementation").toString();
     if (implementation != "native" && implementation != "python" && implementation != "qml") throw Error("插件实现类型需要 native、python 或 qml");
+    if (manifest.contains("python")) {
+        if (manifest.value("python").metaType().id() != QMetaType::QVariantMap)
+            throw Error("插件包的 python 声明需要对象");
+        checkPythonBlock(manifest.value("python").toMap(), "插件包 " + package.id());
+    }
     if (implementation == "native") package.file(manifest.value("native").toMap().value("library").toString());
     package.archive_ = archive;
     package.hash_ = contentHash(package.files_);
@@ -234,6 +286,17 @@ QVariantList PluginPackage::definitions() const
         if (!script.isEmpty()) file(script);
         const auto icon = spec.value("graph").toMap().value("icon").toString();
         if (!icon.isEmpty()) file(icon);
+        // Optional python closure declaration. Kept on the spec so publishing can
+        // collect the payload without re-reading the package manifest.
+        if (spec.contains("python") && spec.value("python").metaType().id() != QMetaType::QVariantMap)
+            throw Error("插件 " + identifier + " 的 python 声明需要对象");
+        const auto packagePython = manifest_.value("python").toMap();
+        auto python = spec.value("python").toMap();
+        if (!python.isEmpty() || !packagePython.isEmpty()) {
+            python = mergePythonBlocks(packagePython, python);
+            checkPythonBlock(python, "插件 " + identifier);
+            spec["python"] = python;
+        }
         if (manifest_.value("implementation") == "python") {
             spec["plugin_api"] = 3;
             spec["code"] = QString::fromUtf8(file(spec.value("code_file").toString()));
@@ -262,10 +325,15 @@ QByteArray PluginPackage::file(const QString &name) const
 
 QString PluginPackage::materialize() const
 {
-    // Unpacked plugin files live beside the program, never in the system cache:
-    // CoRig keeps everything it creates inside its own directory. Content
-    // addressed folders keep a loaded DLL separate from a replaced package.
-    const auto root = QCoreApplication::applicationDirPath() + "/cache/plugin-packages/" + hash();
+    // Unpacked plugin files live in the process cache root: beside the program for
+    // the editor, inside the portable work root for a published application whose
+    // payload must stay read-only. Content-addressed folders keep a loaded DLL
+    // separate from a replaced package.
+    auto cacheRoot = runtimePaths().pluginCacheRoot;
+    // Tools that never call initializeRunOptions (packaging helpers, tests) keep
+    // the historical location instead of writing to a relative path.
+    if (cacheRoot.isEmpty()) cacheRoot = QCoreApplication::applicationDirPath() + "/cache/plugin-packages";
+    const auto root = cacheRoot + "/" + hash();
     for (auto i = files_.cbegin(); i != files_.cend(); ++i) {
         const auto path = root + '/' + checkedPath(i.key());
         QFile existing(path);

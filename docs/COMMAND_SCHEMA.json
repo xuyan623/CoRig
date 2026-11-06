@@ -1,8 +1,12 @@
 {
   "api_version": 3,
+  "app_mode": "editor",
   "application": "CoRig",
   "async": "A job is complete only after its operation succeeds; poll job.get",
   "commands": {
+    "app.connection": {
+      "arguments": []
+    },
     "app.quit": {
       "arguments": [
         "discard"
@@ -28,7 +32,9 @@
         "target",
         "path",
         "width",
-        "height"
+        "height",
+        "job",
+        "window"
       ]
     },
     "clipboard.read": {
@@ -380,6 +386,24 @@
         "detailed"
       ]
     },
+    "params.get": {
+      "arguments": [
+        "node",
+        "param"
+      ]
+    },
+    "params.reset": {
+      "arguments": [
+        "scope"
+      ]
+    },
+    "params.set": {
+      "arguments": [
+        "node",
+        "param",
+        "value"
+      ]
+    },
     "plugin.directory": {
       "arguments": []
     },
@@ -443,8 +467,22 @@
         "include_plugins"
       ]
     },
+    "project.export_original": {
+      "arguments": [
+        "path",
+        "overwrite"
+      ]
+    },
     "project.get": {
       "arguments": []
+    },
+    "project.info": {
+      "arguments": [
+        "name",
+        "description",
+        "author",
+        "version"
+      ]
     },
     "project.new": {
       "arguments": [
@@ -517,6 +555,29 @@
         "text"
       ]
     },
+    "publish.cancel": {
+      "arguments": [
+        "job"
+      ]
+    },
+    "publish.log": {
+      "arguments": []
+    },
+    "publish.start": {
+      "arguments": [
+        "project",
+        "directory",
+        "name",
+        "version",
+        "app_id",
+        "retain_original",
+        "overwrite",
+        "python"
+      ]
+    },
+    "publish.state": {
+      "arguments": []
+    },
     "python.probe": {
       "arguments": [
         "dependencies"
@@ -570,6 +631,11 @@
     },
     "schema": {
       "arguments": []
+    },
+    "settings.open": {
+      "arguments": [
+        "page"
+      ]
     },
     "sync.apply": {
       "arguments": [
@@ -725,7 +791,8 @@
     "workspace.open": {
       "arguments": [
         "page",
-        "window"
+        "window",
+        "activate"
       ]
     },
     "workspace.remove": {
@@ -734,9 +801,3411 @@
       ]
     }
   },
+  "schema_digest": "bc45c0d384a395dd20b6e07804c02f95107eb32c4b7004fa4be4ac1061137f1d",
+  "signatures": {
+    "app.connection": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "复制接入信息"
+      }
+    },
+    "app.quit": {
+      "args": {
+        "discard": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "应用生命周期控制"
+      }
+    },
+    "app.restart": {
+      "args": {
+        "discard": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "path": {
+          "required": false,
+          "type": "string"
+        },
+        "plugin_selections": {
+          "required": false,
+          "type": "object"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "应用生命周期控制"
+      }
+    },
+    "app.state": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "应用状态只读查询"
+      }
+    },
+    "batch": {
+      "args": {
+        "commands": {
+          "required": true,
+          "type": "array"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "发布模式只读，批处理在发布模式下不可达"
+      },
+      "two_phase": true
+    },
+    "capture": {
+      "args": {
+        "height": {
+          "max": 8192,
+          "min": 1,
+          "required": false,
+          "type": "integer",
+          "unit": "px"
+        },
+        "job": {
+          "required": false,
+          "type": "string"
+        },
+        "path": {
+          "required": false,
+          "type": "string"
+        },
+        "target": {
+          "default": "window",
+          "required": false,
+          "type": "string"
+        },
+        "width": {
+          "max": 8192,
+          "min": 1,
+          "required": false,
+          "type": "integer",
+          "unit": "px"
+        },
+        "window": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "截图"
+      }
+    },
+    "clipboard.read": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "deny",
+        "reason": "剪贴板读取接口，发布模式不开放"
+      }
+    },
+    "container.layout": {
+      "args": {
+        "grid": {
+          "default": 16,
+          "max": 128,
+          "min": 1,
+          "required": false,
+          "type": "integer"
+        },
+        "height": {
+          "required": false,
+          "type": "number"
+        },
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "width": {
+          "required": false,
+          "type": "number"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "布局查询/编辑接口，发布模式不开放"
+      }
+    },
+    "controls.click": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "page": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行时控件操作"
+      }
+    },
+    "controls.commit": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "page": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行时控件操作"
+      }
+    },
+    "controls.focus": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "page": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行时控件操作"
+      }
+    },
+    "controls.get": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "page": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行时控件操作"
+      }
+    },
+    "controls.key": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "key": {
+          "required": false,
+          "type": "string"
+        },
+        "modifiers": {
+          "required": false,
+          "type": "string"
+        },
+        "page": {
+          "required": false,
+          "type": "string"
+        },
+        "text": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行时控件操作"
+      }
+    },
+    "controls.list": {
+      "args": {
+        "page": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行时控件操作"
+      }
+    },
+    "controls.pointer": {
+      "args": {
+        "button": {
+          "required": false,
+          "type": "string"
+        },
+        "buttons": {
+          "required": false,
+          "type": "string"
+        },
+        "delta_x": {
+          "default": 0,
+          "required": false,
+          "type": "number"
+        },
+        "delta_y": {
+          "default": 0,
+          "required": false,
+          "type": "number"
+        },
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "modifiers": {
+          "required": false,
+          "type": "string"
+        },
+        "page": {
+          "required": false,
+          "type": "string"
+        },
+        "type": {
+          "default": "click",
+          "enum": [
+            "click",
+            "press",
+            "move",
+            "release",
+            "double_click",
+            "wheel"
+          ],
+          "required": false,
+          "type": "string"
+        },
+        "x": {
+          "required": false,
+          "type": "number"
+        },
+        "y": {
+          "required": false,
+          "type": "number"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行时控件操作"
+      }
+    },
+    "controls.set": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "page": {
+          "required": false,
+          "type": "string"
+        },
+        "property": {
+          "default": "text",
+          "required": false,
+          "type": "string"
+        },
+        "value": {
+          "required": false,
+          "type": "unknown"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行时控件操作"
+      }
+    },
+    "editor.add": {
+      "args": {
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "plugin": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "editor.configure": {
+      "args": {
+        "animation": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "fit": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "left_width": {
+          "required": false,
+          "type": "number"
+        },
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "pan_x": {
+          "required": false,
+          "type": "number"
+        },
+        "pan_y": {
+          "required": false,
+          "type": "number"
+        },
+        "right_width": {
+          "required": false,
+          "type": "number"
+        },
+        "zoom": {
+          "required": false,
+          "type": "number"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "editor.copy": {
+      "args": {
+        "ids": {
+          "required": true,
+          "type": "array"
+        },
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "editor.paste": {
+      "args": {
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "payload": {
+          "required": true,
+          "type": "object"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "editor.place": {
+      "args": {
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "ids": {
+          "required": false,
+          "type": "array"
+        },
+        "index": {
+          "default": -1,
+          "required": false,
+          "type": "integer"
+        },
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "parent": {
+          "required": false,
+          "type": "string"
+        },
+        "position": {
+          "required": false,
+          "type": "array"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "editor.plan": {
+      "args": {
+        "ids": {
+          "required": false,
+          "type": "array"
+        },
+        "operation": {
+          "enum": [
+            "remove",
+            "replace",
+            "withdraw"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "plugin": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "editor.remove": {
+      "args": {
+        "confirmed": {
+          "required": true,
+          "type": "boolean"
+        },
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "ids": {
+          "required": false,
+          "type": "array"
+        },
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "revision": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "editor.reorder": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "index": {
+          "required": true,
+          "type": "integer"
+        },
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "editor.replace": {
+      "args": {
+        "confirmed": {
+          "required": true,
+          "type": "boolean"
+        },
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "ids": {
+          "required": false,
+          "type": "array"
+        },
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "plugin": {
+          "required": true,
+          "type": "string"
+        },
+        "revision": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "editor.state": {
+      "args": {
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "editor.withdraw": {
+      "args": {
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "ids": {
+          "required": false,
+          "type": "array"
+        },
+        "page": {
+          "enum": [
+            "graph",
+            "layout"
+          ],
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑器接口，发布模式不开放"
+      }
+    },
+    "graph.activity": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.connection.options": {
+      "args": {
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "port": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.fit": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.node.add": {
+      "args": {
+        "config": {
+          "required": false,
+          "type": "object"
+        },
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "orientation": {
+          "default": 0,
+          "max": 360,
+          "min": 0,
+          "required": false,
+          "type": "integer",
+          "unit": "deg"
+        },
+        "placed": {
+          "default": true,
+          "required": false,
+          "type": "boolean"
+        },
+        "plugin": {
+          "required": true,
+          "type": "string"
+        },
+        "position": {
+          "default": [
+            80,
+            80
+          ],
+          "required": false,
+          "type": "array"
+        },
+        "title": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.node.move": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "position": {
+          "required": true,
+          "type": "array"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.node.patch": {
+      "args": {
+        "changes": {
+          "required": true,
+          "type": "object"
+        },
+        "id": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.node.remove": {
+      "args": {
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "ids": {
+          "required": false,
+          "type": "array"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.node.rotate": {
+      "args": {
+        "degrees": {
+          "default": 90,
+          "required": false,
+          "type": "integer"
+        },
+        "id": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.overlaps": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.select": {
+      "args": {
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "ids": {
+          "required": false,
+          "type": "array"
+        },
+        "kind": {
+          "default": "node",
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.wire.add": {
+      "args": {
+        "color": {
+          "default": "#5E9DCB",
+          "required": false,
+          "type": "string"
+        },
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "points": {
+          "default": [],
+          "required": false,
+          "type": "array"
+        },
+        "routing": {
+          "default": "curve",
+          "enum": [
+            "curve",
+            "polyline"
+          ],
+          "required": false,
+          "type": "string"
+        },
+        "source": {
+          "required": true,
+          "type": "array"
+        },
+        "target": {
+          "required": true,
+          "type": "array"
+        },
+        "width": {
+          "default": 1.6,
+          "max": 10,
+          "min": 0.5,
+          "required": false,
+          "type": "integer",
+          "unit": "px"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.wire.handles": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "x": {
+          "default": 0,
+          "required": false,
+          "type": "number"
+        },
+        "y": {
+          "default": 0,
+          "required": false,
+          "type": "number"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.wire.patch": {
+      "args": {
+        "changes": {
+          "required": true,
+          "type": "object"
+        },
+        "id": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "graph.wire.remove": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "图编辑接口，发布模式不开放"
+      }
+    },
+    "history.redo": {
+      "args": {},
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑历史接口，发布模式不开放"
+      }
+    },
+    "history.undo": {
+      "args": {},
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "编辑历史接口，发布模式不开放"
+      }
+    },
+    "io.ports": {
+      "args": {},
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "I/O 端口查询"
+      }
+    },
+    "job.cancel": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_JOB_MISSING",
+        "CORIG_NOT_CANCELLABLE"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "异步任务查询/取消"
+      }
+    },
+    "job.get": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_JOB_MISSING",
+        "CORIG_JOB_FAILED",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "异步任务查询/取消"
+      }
+    },
+    "job.list": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "异步任务查询/取消"
+      }
+    },
+    "library.configure": {
+      "args": {
+        "size": {
+          "max": 2,
+          "min": 0.6,
+          "required": false,
+          "type": "number"
+        },
+        "view": {
+          "enum": [
+            "grid",
+            "list"
+          ],
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "deny",
+        "reason": "库管理接口，发布模式不开放"
+      }
+    },
+    "library.favorite": {
+      "args": {
+        "enabled": {
+          "required": true,
+          "type": "boolean"
+        },
+        "plugin": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "deny",
+        "reason": "库管理接口，发布模式不开放"
+      }
+    },
+    "library.preview": {
+      "args": {
+        "plugin": {
+          "required": true,
+          "type": "string"
+        },
+        "scope": {
+          "default": "project",
+          "enum": [
+            "project",
+            "library"
+          ],
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "库管理接口，发布模式不开放"
+      }
+    },
+    "library.search": {
+      "args": {
+        "category": {
+          "required": false,
+          "type": "array"
+        },
+        "query": {
+          "required": false,
+          "type": "string"
+        },
+        "scope": {
+          "default": "all",
+          "enum": [
+            "all",
+            "project",
+            "library"
+          ],
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "库管理接口，发布模式不开放"
+      }
+    },
+    "library.state": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "库管理接口，发布模式不开放"
+      }
+    },
+    "log.clear": {
+      "args": {},
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行日志读取/配置/导出"
+      }
+    },
+    "log.configure": {
+      "args": {
+        "detail": {
+          "default": false,
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行日志读取/配置/导出"
+      }
+    },
+    "log.export": {
+      "args": {
+        "batch": {
+          "required": false,
+          "type": "unknown"
+        },
+        "level": {
+          "required": false,
+          "type": "string"
+        },
+        "node": {
+          "required": false,
+          "type": "string"
+        },
+        "path": {
+          "required": true,
+          "type": "string"
+        },
+        "text": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行日志读取/配置/导出"
+      }
+    },
+    "log.query": {
+      "args": {
+        "after": {
+          "required": false,
+          "type": "integer"
+        },
+        "batch": {
+          "required": false,
+          "type": "unknown"
+        },
+        "level": {
+          "required": false,
+          "type": "string"
+        },
+        "limit": {
+          "required": false,
+          "type": "integer"
+        },
+        "node": {
+          "required": false,
+          "type": "string"
+        },
+        "text": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行日志读取/配置/导出"
+      }
+    },
+    "node.action": {
+      "args": {
+        "action": {
+          "required": true,
+          "type": "string"
+        },
+        "args": {
+          "required": false,
+          "type": "object"
+        },
+        "node": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "节点运行控制"
+      }
+    },
+    "node.configure": {
+      "args": {
+        "changes": {
+          "required": true,
+          "type": "object"
+        },
+        "confirmed": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "persist": {
+          "required": false,
+          "type": "boolean"
+        },
+        "revision": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "节点运行控制"
+      }
+    },
+    "node.configure.plan": {
+      "args": {
+        "changes": {
+          "required": true,
+          "type": "object"
+        },
+        "node": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "只读配置计划未列入发布白名单（W2 评估）"
+      }
+    },
+    "node.state": {
+      "args": {
+        "detailed": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "node": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "节点运行控制"
+      }
+    },
+    "params.get": {
+      "args": {
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "param": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_NOT_FOUND",
+        "CORIG_PRECONDITION"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "用户参数读取"
+      }
+    },
+    "params.reset": {
+      "args": {
+        "scope": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_NOT_FOUND",
+        "CORIG_PRECONDITION"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "用户参数恢复"
+      }
+    },
+    "params.set": {
+      "args": {
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "param": {
+          "required": true,
+          "type": "string"
+        },
+        "value": {
+          "required": true,
+          "type": "unknown"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_NOT_FOUND",
+        "CORIG_PRECONDITION"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "用户参数覆盖"
+      }
+    },
+    "plugin.directory": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "插件管理接口，发布模式不开放"
+      }
+    },
+    "plugin.enable": {
+      "args": {
+        "enabled": {
+          "required": true,
+          "type": "boolean"
+        },
+        "plugin": {
+          "required": false,
+          "type": "string"
+        },
+        "plugins": {
+          "required": false,
+          "type": "array"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "deny",
+        "reason": "插件管理接口，发布模式不开放"
+      }
+    },
+    "plugin.export": {
+      "args": {
+        "directory": {
+          "required": false,
+          "type": "string"
+        },
+        "overwrite": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "path": {
+          "required": false,
+          "type": "string"
+        },
+        "plugin": {
+          "required": false,
+          "type": "string"
+        },
+        "plugins": {
+          "required": false,
+          "type": "array"
+        },
+        "project": {
+          "required": false,
+          "type": "string"
+        },
+        "scope": {
+          "default": "project",
+          "enum": [
+            "project",
+            "library"
+          ],
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_EXPORT_DISABLED"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "deny",
+        "reason": "插件管理接口，发布模式不开放"
+      }
+    },
+    "plugin.export.dialog": {
+      "args": {
+        "plugin": {
+          "required": false,
+          "type": "string"
+        },
+        "scope": {
+          "default": "project",
+          "enum": [
+            "project",
+            "library"
+          ],
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "deny",
+        "reason": "插件管理接口，发布模式不开放"
+      }
+    },
+    "plugin.import": {
+      "args": {
+        "manifest": {
+          "required": false,
+          "type": "object"
+        },
+        "path": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "deny",
+        "reason": "插件管理接口，发布模式不开放"
+      }
+    },
+    "plugin.remove": {
+      "args": {
+        "package": {
+          "required": false,
+          "type": "string"
+        },
+        "plugin": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "deny",
+        "reason": "插件管理接口，发布模式不开放"
+      }
+    },
+    "plugin.settings": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "插件管理接口，发布模式不开放"
+      }
+    },
+    "plugin.state": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "插件管理接口，发布模式不开放"
+      }
+    },
+    "plugin.tree": {
+      "args": {
+        "scope": {
+          "default": "project",
+          "enum": [
+            "project",
+            "library"
+          ],
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "插件管理接口，发布模式不开放"
+      }
+    },
+    "preferences.set": {
+      "args": {
+        "python": {
+          "required": false,
+          "type": "string"
+        },
+        "read_only": {
+          "required": false,
+          "type": "boolean"
+        },
+        "theme": {
+          "enum": [
+            "dark",
+            "light"
+          ],
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "conditional",
+        "reason": "发布模式仅允许不会切换运行环境的偏好设置（theme/python/read_only），具体参数条件由 W2 落地"
+      }
+    },
+    "project.export": {
+      "args": {
+        "include_plugins": {
+          "required": false,
+          "type": "boolean"
+        },
+        "path": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_EXPORT_DISABLED"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "工程/设计管理接口，发布模式不开放"
+      }
+    },
+    "project.export_original": {
+      "args": {
+        "overwrite": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "path": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_EXPORT_DISABLED"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "conditional",
+        "reason": "仅 retain_original=true 的发布实例允许导出原始工程"
+      }
+    },
+    "project.get": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "工程/设计管理接口，发布模式不开放"
+      }
+    },
+    "project.info": {
+      "args": {
+        "author": {
+          "required": false,
+          "type": "string"
+        },
+        "description": {
+          "required": false,
+          "type": "string"
+        },
+        "name": {
+          "required": false,
+          "type": "string"
+        },
+        "version": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "工程/设计管理接口，发布模式不开放"
+      }
+    },
+    "project.new": {
+      "args": {
+        "discard": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "name": {
+          "default": "未命名工程",
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "工程/设计管理接口，发布模式不开放"
+      }
+    },
+    "project.open": {
+      "args": {
+        "discard": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "path": {
+          "required": true,
+          "type": "string"
+        },
+        "plugin_selections": {
+          "required": false,
+          "type": "object"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "工程/设计管理接口，发布模式不开放"
+      }
+    },
+    "project.options": {
+      "args": {
+        "include_plugins": {
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "工程/设计管理接口，发布模式不开放"
+      }
+    },
+    "project.rename": {
+      "args": {
+        "name": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "工程/设计管理接口，发布模式不开放"
+      }
+    },
+    "project.save": {
+      "args": {
+        "include_plugins": {
+          "required": false,
+          "type": "boolean"
+        },
+        "path": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "工程/设计管理接口，发布模式不开放"
+      }
+    },
+    "project.validate": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "工程/设计管理接口，发布模式不开放"
+      }
+    },
+    "property.commit": {
+      "args": {
+        "changes": {
+          "required": true,
+          "type": "object"
+        },
+        "confirmed": {
+          "required": false,
+          "type": "boolean"
+        },
+        "revision": {
+          "required": false,
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "node",
+            "ui",
+            "workspace"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "target": {
+          "required": true,
+          "type": "array"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "属性编辑接口，发布模式不开放"
+      }
+    },
+    "property.discard": {
+      "args": {
+        "scope": {
+          "enum": [
+            "node",
+            "ui",
+            "workspace"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "target": {
+          "required": true,
+          "type": "array"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "属性编辑接口，发布模式不开放"
+      }
+    },
+    "property.drafts": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "属性编辑接口，发布模式不开放"
+      }
+    },
+    "property.get": {
+      "args": {
+        "scope": {
+          "enum": [
+            "node",
+            "ui",
+            "workspace"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "target": {
+          "required": true,
+          "type": "array"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "属性编辑接口，发布模式不开放"
+      }
+    },
+    "property.stage": {
+      "args": {
+        "changes": {
+          "required": true,
+          "type": "object"
+        },
+        "scope": {
+          "enum": [
+            "node",
+            "ui",
+            "workspace"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "target": {
+          "required": true,
+          "type": "array"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "属性编辑接口，发布模式不开放"
+      }
+    },
+    "property.text": {
+      "args": {
+        "field": {
+          "required": true,
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "node",
+            "ui",
+            "workspace"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "target": {
+          "required": true,
+          "type": "array"
+        },
+        "text": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "属性编辑接口，发布模式不开放"
+      }
+    },
+    "publish.cancel": {
+      "args": {
+        "job": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "deny",
+        "reason": "软件发布是编辑器功能，发布运行模式不可用"
+      }
+    },
+    "publish.log": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "软件发布是编辑器功能，发布运行模式不可用"
+      }
+    },
+    "publish.start": {
+      "args": {
+        "app_id": {
+          "required": false,
+          "type": "string"
+        },
+        "directory": {
+          "required": true,
+          "type": "string"
+        },
+        "name": {
+          "required": true,
+          "type": "string"
+        },
+        "overwrite": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "project": {
+          "required": false,
+          "type": "string"
+        },
+        "python": {
+          "required": false,
+          "type": "string"
+        },
+        "retain_original": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "version": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "deny",
+        "reason": "软件发布是编辑器功能，发布运行模式不可用"
+      }
+    },
+    "publish.state": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "软件发布是编辑器功能，发布运行模式不可用"
+      }
+    },
+    "python.probe": {
+      "args": {
+        "dependencies": {
+          "required": false,
+          "type": "array"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "Python 环境探测接口，发布模式不开放"
+      }
+    },
+    "registry": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "自描述接口"
+      }
+    },
+    "resources.get": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "资源状态查询"
+      }
+    },
+    "resources.set": {
+      "args": {
+        "limits": {
+          "required": false,
+          "type": "object"
+        },
+        "reset": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "deny",
+        "reason": "资源限制配置接口，发布模式不开放"
+      }
+    },
+    "runtime.debug": {
+      "args": {
+        "enabled": {
+          "required": true,
+          "type": "boolean"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行控制"
+      }
+    },
+    "runtime.emit": {
+      "args": {
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "outputs": {
+          "required": true,
+          "type": "object"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行控制"
+      }
+    },
+    "runtime.pause": {
+      "args": {},
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行控制"
+      }
+    },
+    "runtime.reset": {
+      "args": {},
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行控制"
+      }
+    },
+    "runtime.start": {
+      "args": {
+        "debug": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行控制"
+      }
+    },
+    "runtime.state": {
+      "args": {},
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行控制"
+      }
+    },
+    "runtime.step": {
+      "args": {
+        "mode": {
+          "enum": [
+            "batch",
+            "node"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "source": {
+          "required": false,
+          "type": "unknown"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行控制"
+      }
+    },
+    "runtime.stop": {
+      "args": {},
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "运行控制"
+      }
+    },
+    "schema": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "自描述接口"
+      }
+    },
+    "settings.open": {
+      "args": {
+        "page": {
+          "default": "general",
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "打开设置界面"
+      }
+    },
+    "sync.apply": {
+      "args": {
+        "direction": {
+          "enum": [
+            "graph_to_ui",
+            "ui_to_graph"
+          ],
+          "required": true,
+          "type": "string"
+        },
+        "keys": {
+          "required": true,
+          "type": "array"
+        },
+        "revision": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "双向同步接口，发布模式不开放"
+      }
+    },
+    "sync.plan": {
+      "args": {
+        "direction": {
+          "enum": [
+            "graph_to_ui",
+            "ui_to_graph"
+          ],
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "双向同步接口，发布模式不开放"
+      }
+    },
+    "ui.container.add": {
+      "args": {
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "parent": {
+          "required": false,
+          "type": "string"
+        },
+        "plugin": {
+          "default": "layout.column",
+          "required": false,
+          "type": "string"
+        },
+        "properties": {
+          "required": false,
+          "type": "object"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "UI 编辑接口，发布模式不开放"
+      }
+    },
+    "ui.item.move": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "index": {
+          "required": false,
+          "type": "integer"
+        },
+        "parent": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "UI 编辑接口，发布模式不开放"
+      }
+    },
+    "ui.item.patch": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "properties": {
+          "required": true,
+          "type": "object"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "UI 编辑接口，发布模式不开放"
+      }
+    },
+    "ui.item.remove": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "UI 编辑接口，发布模式不开放"
+      }
+    },
+    "ui.item.schema": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "UI 编辑接口，发布模式不开放"
+      }
+    },
+    "ui.update": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "UI 编辑接口，发布模式不开放"
+      }
+    },
+    "ui.view.add": {
+      "args": {
+        "id": {
+          "required": false,
+          "type": "string"
+        },
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "parent": {
+          "required": false,
+          "type": "string"
+        },
+        "properties": {
+          "required": false,
+          "type": "object"
+        },
+        "view": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "UI 编辑接口，发布模式不开放"
+      }
+    },
+    "ui.view.appearance": {
+      "args": {
+        "changes": {
+          "required": false,
+          "type": "object"
+        },
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "view": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "UI 编辑接口，发布模式不开放"
+      }
+    },
+    "ui.view.bind": {
+      "args": {
+        "id": {
+          "required": true,
+          "type": "string"
+        },
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "view": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "UI 编辑接口，发布模式不开放"
+      }
+    },
+    "update.check": {
+      "args": {},
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "deny",
+        "reason": "更新管理接口，发布模式不开放"
+      }
+    },
+    "update.install": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "admin",
+      "publish": {
+        "policy": "deny",
+        "reason": "更新管理接口，发布模式不开放"
+      }
+    },
+    "update.state": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "deny",
+        "reason": "更新管理接口，发布模式不开放"
+      }
+    },
+    "view.actions": {
+      "args": {
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "view": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "视图交互"
+      }
+    },
+    "view.call": {
+      "args": {
+        "action": {
+          "required": true,
+          "type": "string"
+        },
+        "args": {
+          "required": false,
+          "type": "object"
+        },
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "view": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "视图交互"
+      }
+    },
+    "view.read": {
+      "args": {
+        "args": {
+          "required": false,
+          "type": "object"
+        },
+        "node": {
+          "required": true,
+          "type": "string"
+        },
+        "view": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": true,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "视图交互"
+      }
+    },
+    "window.close": {
+      "args": {
+        "discard": {
+          "required": false,
+          "type": "boolean"
+        },
+        "window": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "关闭窗口"
+      }
+    },
+    "window.configure": {
+      "args": {
+        "focus": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "height": {
+          "max": 16384,
+          "min": 1,
+          "required": false,
+          "type": "integer",
+          "unit": "px"
+        },
+        "state": {
+          "enum": [
+            "normal",
+            "minimized",
+            "maximized",
+            "fullscreen"
+          ],
+          "required": false,
+          "type": "string"
+        },
+        "width": {
+          "max": 16384,
+          "min": 1,
+          "required": false,
+          "type": "integer",
+          "unit": "px"
+        },
+        "window": {
+          "required": true,
+          "type": "string"
+        },
+        "x": {
+          "max": 100000,
+          "min": -100000,
+          "required": false,
+          "type": "number",
+          "unit": "px"
+        },
+        "y": {
+          "max": 100000,
+          "min": -100000,
+          "required": false,
+          "type": "number",
+          "unit": "px"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "deny",
+        "reason": "窗口配置接口，发布模式不开放"
+      }
+    },
+    "window.pin": {
+      "args": {
+        "enabled": {
+          "required": true,
+          "type": "boolean"
+        },
+        "window": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "deny",
+        "reason": "窗口配置接口，发布模式不开放"
+      }
+    },
+    "workspace.close": {
+      "args": {
+        "discard": {
+          "required": false,
+          "type": "boolean"
+        },
+        "page": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "工作区页面打开/关闭/列表"
+      }
+    },
+    "workspace.configure": {
+      "args": {
+        "changes": {
+          "required": true,
+          "type": "object"
+        },
+        "page": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "工作区配置/管理接口，发布模式不开放"
+      }
+    },
+    "workspace.detach": {
+      "args": {
+        "page": {
+          "required": true,
+          "type": "string"
+        },
+        "x": {
+          "required": false,
+          "type": "integer"
+        },
+        "y": {
+          "required": false,
+          "type": "integer"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "deny",
+        "reason": "工作区配置/管理接口，发布模式不开放"
+      }
+    },
+    "workspace.list": {
+      "args": {},
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "read",
+      "publish": {
+        "policy": "allow",
+        "reason": "工作区页面打开/关闭/列表"
+      }
+    },
+    "workspace.move": {
+      "args": {
+        "index": {
+          "default": -1,
+          "required": false,
+          "type": "integer"
+        },
+        "page": {
+          "required": true,
+          "type": "string"
+        },
+        "window": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "deny",
+        "reason": "工作区配置/管理接口，发布模式不开放"
+      }
+    },
+    "workspace.open": {
+      "args": {
+        "activate": {
+          "default": false,
+          "required": false,
+          "type": "boolean"
+        },
+        "page": {
+          "required": true,
+          "type": "string"
+        },
+        "window": {
+          "required": false,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY"
+      ],
+      "partition": "control",
+      "publish": {
+        "policy": "allow",
+        "reason": "工作区页面打开/关闭/列表"
+      }
+    },
+    "workspace.remove": {
+      "args": {
+        "page": {
+          "required": true,
+          "type": "string"
+        }
+      },
+      "async": false,
+      "errors": [
+        "CORIG_ARG_INVALID",
+        "CORIG_PRECONDITION",
+        "CORIG_READ_ONLY",
+        "CORIG_NOT_FOUND"
+      ],
+      "partition": "authoring",
+      "publish": {
+        "policy": "deny",
+        "reason": "工作区配置/管理接口，发布模式不开放"
+      }
+    }
+  },
   "values": {
     "bytes": "{type:bytes,base64:...,length:N}",
     "samples": "{time:seconds,values:{name:number}}"
   },
-  "version": "0.4.1"
+  "version": "0.4.4"
 }

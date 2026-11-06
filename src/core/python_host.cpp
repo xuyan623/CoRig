@@ -2,6 +2,7 @@
 #include "resource_policy.h"
 #include <QCryptographicHash>
 #include <QElapsedTimer>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
@@ -20,7 +21,8 @@ namespace corig {
 struct PythonHost::Worker {
     struct Request { QVariantMap message; std::promise<QVariantMap> result; };
     PythonHost &owner;
-    QString package, interpreter;
+    QString package;
+    PythonEnvironment environment;
     quint64 generation;
     std::mutex mutex;
     std::condition_variable changed;
@@ -28,8 +30,8 @@ struct PythonHost::Worker {
     std::atomic_bool stopping{false};
     std::thread thread;
 
-    Worker(PythonHost &host, QString key, QString executable, quint64 identity)
-        : owner(host), package(std::move(key)), interpreter(std::move(executable)), generation(identity), thread([this] { run(); }) {}
+    Worker(PythonHost &host, QString key, PythonEnvironment source, quint64 identity)
+        : owner(host), package(std::move(key)), environment(std::move(source)), generation(identity), thread([this] { run(); }) {}
     ~Worker() {
         stopping = true; changed.notify_all();
         if (thread.joinable()) thread.join();
@@ -105,13 +107,28 @@ struct PythonHost::Worker {
                 if (!process && operation == "drop") { request->result.set_value({{"ok",true}}); continue; }
                 if (!process) {
                     static const bool initialized = [] { initializePythonResource(); return true; }(); Q_UNUSED(initialized);
-                    QFile source(":/worker.py"); if (!source.open(QIODevice::ReadOnly)) throw Error("Python 工作进程代码不可用");
-                    process = std::make_unique<QProcess>(); auto environment = QProcessEnvironment::systemEnvironment();
-                    environment.remove("PYTHONHOME"); environment.remove("PYTHONPATH");
-                    environment.insert("PYTHONUTF8","1"); environment.insert("PYTHONDONTWRITEBYTECODE","1");
-                    environment.insert("CORIG_PYTHON_MESSAGE_BYTES",QString::number(resourceLimit("python_message_mib")*1024*1024));
-                    process->setProcessEnvironment(environment); process->setProgram(interpreter);
-                    process->setArguments({"-u","-B","-c",QString::fromUtf8(source.readAll())});
+                    const bool isolated = environment.bundled() || environment.isolated;
+                    QStringList arguments;
+                    // A payload runtime is isolated: no user site, no environment
+                    // overrides, UTF-8 filesystem encoding and no bytecode writes.
+                    if (isolated) arguments << "-I" << "-B" << "-X" << "utf8";
+                    arguments << "-u";
+                    if (!environment.workerScript.isEmpty()) {
+                        if (isolated && !QFileInfo(environment.workerScript).isFile())
+                            throw Error("Python 工作进程脚本不存在：" + environment.workerScript);
+                        arguments << environment.workerScript;
+                    } else {
+                        QFile source(":/worker.py");
+                        if (!source.open(QIODevice::ReadOnly)) throw Error("Python 工作进程代码不可用");
+                        arguments << "-c" << QString::fromUtf8(source.readAll());
+                    }
+                    process = std::make_unique<QProcess>(); auto variables = QProcessEnvironment::systemEnvironment();
+                    variables.remove("PYTHONHOME"); variables.remove("PYTHONPATH"); variables.remove("PYTHONSTARTUP");
+                    variables.insert("PYTHONUTF8","1"); variables.insert("PYTHONDONTWRITEBYTECODE","1");
+                    variables.insert("CORIG_PYTHON_MESSAGE_BYTES",QString::number(resourceLimit("python_message_mib")*1024*1024));
+                    process->setProcessEnvironment(variables); process->setProgram(environment.interpreter);
+                    if (!environment.workingDirectory.isEmpty()) process->setWorkingDirectory(environment.workingDirectory);
+                    process->setArguments(arguments);
                     process->setProcessChannelMode(QProcess::SeparateChannels); stderrTail.clear(); process->start();
                     if (!process->waitForStarted(5000)) throw Error("本地 Python 无法启动："+process->errorString());
                     const auto handshake = read(5000,false,0);
@@ -163,19 +180,71 @@ PythonHost::~PythonHost() { close(); }
 
 void PythonHost::selectInterpreter(const QString &path)
 {
-    if (!path.isEmpty() && (!QFileInfo(path).isAbsolute() || !QFileInfo(path).isFile())) throw Error("请选择实际存在的本地 python.exe");
-    close(); std::lock_guard guard(mutex_); interpreter_ = path.isEmpty() ? QString{} : QFileInfo(path).absoluteFilePath();
+    PythonEnvironment selected;
+    selected.interpreter = path;
+    setEnvironment(selected);
 }
 
-QString PythonHost::interpreter() const { std::lock_guard guard(mutex_); return interpreter_; }
+void PythonHost::setEnvironment(const PythonEnvironment &environment)
+{
+    auto next = environment;
+    if (!next.interpreter.isEmpty()) {
+        if (!QFileInfo(next.interpreter).isAbsolute() || !QFileInfo(next.interpreter).isFile())
+            throw Error("请选择实际存在的本地 python.exe");
+        next.interpreter = QFileInfo(next.interpreter).absoluteFilePath();
+    }
+    if (!next.workerScript.isEmpty()) {
+        if (!QFileInfo(next.workerScript).isFile())
+            throw Error("Python 工作进程脚本不存在：" + next.workerScript);
+        next.workerScript = QFileInfo(next.workerScript).absoluteFilePath();
+    }
+    if (!next.payloadRoot.isEmpty()) {
+        next.payloadRoot = QDir::cleanPath(QFileInfo(next.payloadRoot).absoluteFilePath());
+        // A published application never falls back to the developer machine:
+        // the interpreter and the worker script must both live in the payload.
+        if (next.interpreter.isEmpty()) throw Error("发布的 Python 载荷没有解释器");
+        if (!pythonPathInside(next.interpreter,next.payloadRoot))
+            throw Error("发布的 Python 解释器必须来自载荷目录：" + next.interpreter);
+        if (next.workerScript.isEmpty()) throw Error("发布的 Python 载荷缺少 worker.py");
+        if (!pythonPathInside(next.workerScript,next.payloadRoot))
+            throw Error("发布的 Python 工作进程脚本必须位于载荷目录：" + next.workerScript);
+        next.isolated = true;
+    }
+    close();
+    std::lock_guard guard(mutex_);
+    environment_ = next;
+}
+
+PythonEnvironment PythonHost::environment() const { std::lock_guard guard(mutex_); return environment_; }
+
+QString PythonHost::interpreter() const { std::lock_guard guard(mutex_); return environment_.interpreter; }
+
+bool pythonPathInside(const QString &path, const QString &root)
+{
+    if (path.isEmpty() || root.isEmpty()) return false;
+    const auto resolved = [](const QString &value) {
+        auto canonical = QFileInfo(value).canonicalFilePath();
+        if (canonical.isEmpty()) canonical = QFileInfo(value).absoluteFilePath();
+        return QDir::fromNativeSeparators(QDir::cleanPath(canonical));
+    };
+    const auto child = resolved(path), parent = resolved(root);
+#ifdef Q_OS_WIN
+    return child.compare(parent,Qt::CaseInsensitive) == 0
+        || child.startsWith(parent + QLatin1Char('/'),Qt::CaseInsensitive);
+#else
+    return child == parent || child.startsWith(parent + QLatin1Char('/'));
+#endif
+}
 
 QVariantMap PythonHost::call(const QVariantMap &request)
 {
     const auto package = request.value("package","scripts").toString();
     std::shared_ptr<Worker> worker;
     { std::lock_guard guard(mutex_);
-      if (interpreter_.isEmpty()) throw Error("请在设置中选择本地 Python 环境；官方功能无需 Python");
-      if (!workers_.contains(package)) workers_.insert(package,std::make_shared<Worker>(*this,package,interpreter_,++nextWorker_));
+      if (environment_.interpreter.isEmpty())
+          throw Error(environment_.bundled() ? "发布的应用程序缺少 Python 载荷解释器"
+                                             : "请在设置中选择本地 Python 环境；官方功能无需 Python");
+      if (!workers_.contains(package)) workers_.insert(package,std::make_shared<Worker>(*this,package,environment_,++nextWorker_));
       worker = workers_.value(package); }
     return worker->submit(request);
 }

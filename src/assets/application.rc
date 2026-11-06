@@ -16,11 +16,11 @@ BEGIN
         BLOCK "080404b0"
         BEGIN
             VALUE "FileDescription", "联调 · CoRig\0"
-            VALUE "FileVersion", "0.4.3\0"
+            VALUE "FileVersion", "0.4.4\0"
             VALUE "InternalName", "CoRig\0"
             VALUE "OriginalFilename", "CoRig.exe\0"
             VALUE "ProductName", "CoRig\0"
-            VALUE "ProductVersion", "0.4.3\0"
+            VALUE "ProductVersion", "0.4.4\0"
         END
     END
     BLOCK "VarFileInfo"
