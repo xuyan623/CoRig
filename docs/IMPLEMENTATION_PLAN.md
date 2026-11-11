@@ -1,8 +1,6 @@
 <!-- USER BEGIN implementation-plan -->
 # CoRig 0.5.0 实施计划与工作规则
 
-更新：2026-11-11。本文件同时承担原拟 AGENTS.md 的协作规则；不另建 AGENTS.md。正式项目 README 在最终交付时编写。
-
 ## 1. 先读什么，在哪里工作
 
 1. [PROGRESS.md](PROGRESS.md)：确认当前大步、授权状态和实际证据。
