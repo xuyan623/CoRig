@@ -1,0 +1,2 @@
+# DSH local session memory is machine-specific data, not a project artifact.
+/.dsh-meow/
